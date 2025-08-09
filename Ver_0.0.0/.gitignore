@@ -1,7 +1,4 @@
-ocr_history.json
-translate_history.json
-Main.log
-OCR.log
-Translater.log
+*.log
+*.json
 result
 __pycache__

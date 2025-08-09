@@ -8,7 +8,7 @@ from PyQt6 import QtWidgets, QtCore, QtGui
 from MainGUI import Ui_MainWindow
 from ocr_processor import OCR_Processor, OCR_Processor_Config
 from region_capture import RegionSelector
-from translater import NLLBTranslator, NLLBConfig, TranslateConfig
+from NLLB_translator import NLLBTranslator, NLLBConfig, TranslateConfig
 from datetime import datetime
 import json
 from pathlib import Path
