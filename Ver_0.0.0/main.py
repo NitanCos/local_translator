@@ -7,6 +7,7 @@ import requests  # For HTTPError
 from PyQt6 import QtWidgets, QtCore, QtGui
 from MainGUI import Ui_MainWindow
 from ocr_processor import OCR_Processor, OCR_Processor_Config
+from API_mode import APIMode
 from region_capture import RegionSelector
 from NLLB_translator import NLLBTranslator, NLLBConfig, TranslateConfig
 from datetime import datetime
@@ -76,6 +77,8 @@ class MainApplication(QtWidgets.QMainWindow, Ui_MainWindow):
         self.init_components()
         self.setup_connections()
         self.load_history()
+        self.api_mode = APIMode()
+        self.is_api_mode = False  # 預設非 API mode
         logger.info("MainApplication initialization completed")
 
     def init_components(self):
@@ -170,17 +173,27 @@ class MainApplication(QtWidgets.QMainWindow, Ui_MainWindow):
                 os.makedirs("screenshots", exist_ok=True)
                 img_array = selector.capture_screenshot(save_path=save_path, save_image=self.checkBox.isChecked())
                 if img_array is not None:
-                    predict_res = self.ocr_processor.ocr_predict(img_array)
-                    all_text = self.ocr_processor.json_preview_and_get_all_text(predict_res)
-                    # 前處理 OCR 文本，僅保留完整句子
-                    processed_sentences = self.preprocess_ocr_text(all_text)
-                    text = "\n".join(processed_sentences)
-                    self.OCR_Detect_Text.setPlainText(text)
-                    self.ocr_history.insert(0, {"timestamp": timestamp, "text": text, "image_path": save_path if self.checkBox.isChecked() else None})
-                    self.ocr_history = self.ocr_history[:self.max_history]
-                    self.save_history()
-                    logger.info("OCR completed successfully with %d sentences", len(processed_sentences))
-                    self.statusbar.showMessage("OCR 完成 / OCR completed", 5000)
+                    if self.is_api_mode:
+                        # API mode: 直接 OCR + 翻譯到 Translated_Text
+                        translated_text = self.api_mode.process_image(img_array)
+                        self.Translated_Text.setPlainText(translated_text)
+                        self.translate_history.insert(0, {"timestamp": timestamp, "text": translated_text})
+                        self.translate_history = self.translate_history[:self.max_history]
+                        self.save_history()
+                        logger.info("API mode OCR + translation completed")
+                        self.statusbar.showMessage("API OCR + 翻譯完成 / API OCR + Translation completed", 5000)
+                    else:
+                        # 原有本地 OCR 邏輯
+                        predict_res = self.ocr_processor.ocr_predict(img_array)
+                        all_text = self.ocr_processor.json_preview_and_get_all_text(predict_res)
+                        processed_sentences = self.preprocess_ocr_text(all_text)
+                        text = "\n".join(processed_sentences)
+                        self.OCR_Detect_Text.setPlainText(text)
+                        self.ocr_history.insert(0, {"timestamp": timestamp, "text": text, "image_path": save_path if self.checkBox.isChecked() else None})
+                        self.ocr_history = self.ocr_history[:self.max_history]
+                        self.save_history()
+                        logger.info("Local OCR completed successfully with %d sentences", len(processed_sentences))
+                        self.statusbar.showMessage("OCR 完成 / OCR completed", 5000)
                 else:
                     logger.error("Failed to capture screenshot")
                     self.statusbar.showMessage("螢幕捕捉失敗 / Screenshot capture failed", 5000)
@@ -242,10 +255,126 @@ class MainApplication(QtWidgets.QMainWindow, Ui_MainWindow):
         self.statusbar.showMessage("翻譯文本已清除 / Translated text cleared", 3000)
 
     def show_select_mode(self):
-        """顯示選擇模式對話框（未來功能） / Show select mode dialog (future feature)"""
+        """顯示選擇模式對話框：選擇 API 或本地模式 / Show select mode dialog: Choose API or Local mode"""
         logger.info("Showing select mode")
-        QtWidgets.QMessageBox.information(self, "Select Mode", "此功能即將推出，敬請期待！\nThis feature is coming soon, stay tuned!")
-        logger.info("Select Mode accessed (placeholder)")
+        dialog = QtWidgets.QDialog(self)
+        dialog.setWindowTitle("選擇模式 / Choose Mode")
+        layout = QtWidgets.QFormLayout()
+
+        # 模式選擇
+        mode_label = QtWidgets.QLabel("選擇模式 / Choose Mode:")
+        mode_combo = QtWidgets.QComboBox()
+        mode_combo.addItems(["Local Mode", "API Mode"])
+        mode_combo.setCurrentText("API Mode" if self.is_api_mode else "Local Mode")
+        layout.addRow(mode_label, mode_combo)
+
+        # API 相關欄位
+        api_label = QtWidgets.QLabel("選擇 API / Choose API:")
+        api_combo = QtWidgets.QComboBox()
+        api_combo.addItems(["DeepL", "Gemini"])
+        api_combo.setCurrentText(self.api_mode.config.api_type)
+        layout.addRow(api_label, api_combo)
+
+        lang_label = QtWidgets.QLabel("翻譯語言 / Target Language:")
+        lang_combo = QtWidgets.QComboBox()
+        lang_combo.addItems(["Traditional Chinese", "English", "Japanese"])
+        lang_combo.setCurrentText(self.api_mode.config.target_lang)
+        layout.addRow(lang_label, lang_combo)
+
+        key_label = QtWidgets.QLabel("API 金鑰 / API Key:")
+        key_edit = QtWidgets.QLineEdit()
+        key_edit.setText(self.api_mode.config.api_key)
+        layout.addRow(key_label, key_edit)
+
+        model_label = QtWidgets.QLabel("模型 / Model (僅 Gemini):")
+        model_edit = QtWidgets.QLineEdit()
+        model_edit.setText(self.api_mode.config.model)
+        layout.addRow(model_label, model_edit)
+
+        # 測試按鈕和結果顯示
+        test_btn = QtWidgets.QPushButton("測試 / Test")
+        result_label = QtWidgets.QLabel("")  # 用來顯示打勾/叉和訊息
+        layout.addRow(test_btn)
+        layout.addRow(result_label)
+
+        # 動態隱藏/顯示 API 相關欄位
+        def toggle_api_fields():
+            is_api_mode = mode_combo.currentText() == "API Mode"
+            api_label.setVisible(is_api_mode)
+            api_combo.setVisible(is_api_mode)
+            lang_label.setVisible(is_api_mode)
+            lang_combo.setVisible(is_api_mode)
+            key_label.setVisible(is_api_mode)
+            key_edit.setVisible(is_api_mode)
+            model_label.setVisible(is_api_mode and api_combo.currentText() == "Gemini")
+            model_edit.setVisible(is_api_mode and api_combo.currentText() == "Gemini")
+            test_btn.setVisible(is_api_mode)
+            result_label.setVisible(is_api_mode)
+
+        # 動態隱藏/顯示 model 輸入（僅 Gemini）
+        def toggle_model_input():
+            if mode_combo.currentText() == "API Mode" and api_combo.currentText() == "Gemini":
+                model_label.show()
+                model_edit.show()
+            else:
+                model_label.hide()
+                model_edit.hide()
+
+        mode_combo.currentTextChanged.connect(toggle_api_fields)
+        api_combo.currentTextChanged.connect(toggle_model_input)
+        toggle_api_fields()  # 初始化顯示
+
+        def perform_test():
+            api_type = api_combo.currentText()
+            api_key = key_edit.text().strip()
+            model = model_edit.text().strip() if api_type == "Gemini" else ""
+            target_lang = lang_combo.currentText()
+            self.api_mode.update_config(api_type, api_key, model, target_lang)
+            success, message = self.api_mode.test_api()
+            if success:
+                result_label.setText("✅ " + message)
+            else:
+                result_label.setText("❌ " + message)
+
+        test_btn.clicked.connect(perform_test)
+
+        # 確認按鈕
+        btn_box = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.StandardButton.Ok | QtWidgets.QDialogButtonBox.StandardButton.Cancel)
+        btn_box.accepted.connect(lambda: self.switch_mode(
+            dialog,
+            mode_combo.currentText(),
+            api_combo.currentText(),
+            key_edit.text(),
+            model_edit.text(),
+            lang_combo.currentText()
+        ))
+        btn_box.rejected.connect(dialog.reject)
+        layout.addWidget(btn_box)
+
+        dialog.setLayout(layout)
+        dialog.exec()
+
+    def enable_api_mode(self, dialog, api_type, api_key, model, target_lang):
+        """啟用 API 模式並儲存設定"""
+        self.api_mode.update_config(api_type, api_key, model, target_lang)
+        self.is_api_mode = True
+        self.statusbar.showMessage("已切換到 API 模式 / Switched to API mode", 5000)
+        logger.info("API mode enabled")
+        dialog.accept()
+    
+    def switch_mode(self, dialog, mode, api_type, api_key, model, target_lang):
+        """切換模式並儲存設定 / Switch mode and save configuration"""
+        logger.info(f"Switching to mode: {mode}")
+        if mode == "API Mode":
+            self.api_mode.update_config(api_type, api_key, model, target_lang)
+            self.is_api_mode = True
+            self.statusbar.showMessage("已切換到 API 模式 / Switched to API mode", 5000)
+            logger.info("Switched to API mode")
+        else:
+            self.is_api_mode = False
+            self.statusbar.showMessage("已切換到本地模式 / Switched to Local mode", 5000)
+            logger.info("Switched to Local mode")
+        dialog.accept()
 
     def show_ocr_setting(self):
         """顯示 OCR 設定對話框 / Show OCR settings dialog"""
