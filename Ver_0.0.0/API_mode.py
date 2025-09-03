@@ -8,19 +8,24 @@ import os
 from google.generativeai import GenerativeModel, configure
 import google.generativeai as genai
 from ocr_processor import OCR_Processor, OCR_Processor_Config
+import nltk
+import re
 
-# 日誌設定，與 main.py 一致
+# 日誌設定
 logger = logging.getLogger("API_mode")
 logger.setLevel(logging.DEBUG)
 
 # 儲存 API 設定的檔案
 CONFIG_FILE = "api_config.json"
 
+# 下載 NLTK 數據
+nltk.download('punkt', quiet=True)
+
 class APIConfig:
     def __init__(self, api_type="Gemini", api_key="", model="", target_lang="Traditional Chinese"):
         self.api_type = api_type
         self.api_key = api_key
-        self.model = model if api_type == "Gemini" else ""  # 只對 Gemini 有 model
+        self.model = model if api_type == "Gemini" else ""
         self.target_lang = target_lang
 
     def save(self):
@@ -74,9 +79,9 @@ class APIMode:
         """測試 DeepL API"""
         url = "https://api-free.deepl.com/v2/translate"
         lang_code = {
-            "Traditional Chinese": "ZH",
+            "Traditional Chinese": "ZH-HANT",
             "English": "EN",
-            "Japanese": "JA"  # 添加日文語言代碼
+            "Japanese": "JA"
         }.get(self.config.target_lang, "EN")
         params = {
             "auth_key": self.config.api_key,
@@ -114,29 +119,22 @@ class APIMode:
             logger.error(f"Gemini test failed: {e}")
             return False, f"測試失敗 / Test failed: {str(e)}"
 
-    def process_image(self, img_array):
-        """處理圖片：OCR + 翻譯，回傳翻譯文字"""
+    def translate_text(self, text):
+        """翻譯純文字，回傳翻譯結果"""
         if self.config.api_type == "DeepL":
-            return self._process_deepl(img_array)
+            return self._translate_deepl(text)
         elif self.config.api_type == "Gemini":
-            return self._process_gemini(img_array)
+            return self._translate_gemini(text)
         else:
             raise ValueError("未知的 API 類型 / Unknown API type")
 
-    def _process_deepl(self, img_array):
-        """使用本地 OCR + DeepL 翻譯"""
-        self.init_ocr()
-        predict_res = self.ocr_processor.ocr_predict(img_array)
-        all_text_list = self.ocr_processor.json_preview_and_get_all_text(predict_res)
-        text = " ".join(all_text_list)  # 合併文字
-        if not text:
-            return "無偵測到文字 / No text detected"
-
+    def _translate_deepl(self, text):
+        """使用 DeepL 翻譯文字"""
         url = "https://api-free.deepl.com/v2/translate"
         lang_code = {
-            "Traditional Chinese": "ZH",
+            "Traditional Chinese": "ZH-HANT",
             "English": "EN",
-            "Japanese": "JA"  # 添加日文語言代碼
+            "Japanese": "JA"
         }.get(self.config.target_lang, "EN")
         params = {
             "auth_key": self.config.api_key,
@@ -148,14 +146,69 @@ class APIMode:
             response.raise_for_status()
             data = response.json()
             translated_text = data["translations"][0]["text"]
-            logger.info("DeepL translation successful")
+            logger.info("DeepL text translation successful")
             return translated_text
         except Exception as e:
-            logger.error(f"DeepL processing failed: {e}")
-            return f"處理失敗 / Processing failed: {str(e)}"
+            logger.error(f"DeepL text translation failed: {e}")
+            return f"文字翻譯失敗 / Text translation failed: {str(e)}"
 
-    def _process_gemini(self, img_array):
-        """使用 Gemini 直接處理圖片（OCR + 翻譯），提示詞參照 translate_image.py"""
+    def _translate_gemini(self, text):
+        """使用 Gemini 翻譯文字"""
+        try:
+            configure(api_key=self.config.api_key)
+            model = GenerativeModel(self.config.model or "gemini-1.5-flash")
+
+            # 提示詞，基於 translate_image.py 的結構，簡化為純文字翻譯
+            prompt = """
+            Role: Professional Text Translator
+
+            Languages:
+              - Source Text: Automatically detect (Japanese, English, or Chinese)
+              - Translation: Translate to {target_lang}
+
+            Instructions:
+            1. Accurately detect the language of the input text.
+            2. Preserve the original text format and structure:
+               - Maintain bullet points, numbered lists, and other formatting elements.
+               - Keep line breaks and paragraph structures intact.
+               - Preserve any special characters or symbols used for formatting.
+            3. Refine the translation:
+               - Retain all meaningful punctuation.
+               - Preserve the tone, style, and intent of the original text.
+               - Adapt idiomatic expressions and cultural nuances appropriately.
+            4. Output the result as the translated text only.
+            """.format(target_lang=self.config.target_lang)
+
+            response = model.generate_content(prompt + "\n\nInput text:\n" + text)
+            translated_text = response.text.strip()
+            logger.info("Gemini text translation successful")
+            return translated_text
+        except Exception as e:
+            logger.error(f"Gemini text translation failed: {e}")
+            return f"文字翻譯失敗 / Text translation failed: {str(e)}"
+
+    def ocr_image(self, img_array):
+        """僅進行 OCR 辨識文字，回傳未翻譯文字"""
+        if self.config.api_type == "DeepL":
+            return self._ocr_deepl(img_array)
+        elif self.config.api_type == "Gemini":
+            return self._ocr_gemini(img_array)
+        else:
+            raise ValueError("未知的 API 類型 / Unknown API type")
+
+    def _ocr_deepl(self, img_array):
+        """使用本地 OCR 辨識文字"""
+        self.init_ocr()
+        predict_res = self.ocr_processor.ocr_predict(img_array)
+        all_text_list = self.ocr_processor.json_preview_and_get_all_text(predict_res)
+        text = "\n".join(all_text_list)
+        if not text:
+            return "無偵測到文字 / No text detected"
+        logger.info("DeepL OCR successful")
+        return text
+
+    def _ocr_gemini(self, img_array):
+        """使用 Gemini 辨識圖片文字（未翻譯）"""
         try:
             configure(api_key=self.config.api_key)
             model = GenerativeModel(self.config.model or "gemini-1.5-flash")
@@ -166,13 +219,13 @@ class APIMode:
             img.save(buffered, format="JPEG")
             img_bytes = buffered.getvalue()
 
-            # 提示詞基於 translate_image.py 的 get_prompt()，調整為 OCR + 翻譯
+            # 提示詞參考 translate_image.py 的 get_prompt，但修改為純辨識未翻譯
+            # 參考：https://github.com/google/generative-ai-python/issues/112 中的 OCR Prompt 示例，並調整為保留格式
             prompt = """
-            Role: Professional Image Text Recognizer and Translator
+            Role: Professional Image Text Recognizer
 
             Languages:
               - Image Text: Automatically detect (Japanese or English or Chinese)
-              - Translation: Translate to {target_lang}
 
             Instructions:
             1. Accurately transcribe the text in the image, detecting the language.
@@ -183,14 +236,10 @@ class APIMode:
             3. Refine the transcription:
                - Retain all meaningful punctuation.
                - Accurately capture any emphasis (bold, italic, underline) if discernible.
-            4. Translate the transcribed text to {target_lang}.
-            5. In the translation:
-               - Maintain the original formatting, including lists and line breaks.
-               - Preserve the tone, style, and intent of the original text.
-               - Adapt idiomatic expressions and cultural nuances appropriately.
-            6. Ensure both the transcription and translation accurately reflect the original image text in content and format.
-            7. Output the result as the translated text only.
-            """.format(target_lang=self.config.target_lang)
+            4. Do not translate the text; output only the original transcribed text.
+            5. Ensure the transcription accurately reflects the original image text in content and format.
+            6. Output the result as the transcribed text only, with sentences separated by newlines if appropriate.
+            """
 
             # 使用 Gemini 生成內容
             contents = [
@@ -198,12 +247,18 @@ class APIMode:
                 {"role": "user", "parts": [{"inline_data": {"mime_type": "image/jpeg", "data": base64.b64encode(img_bytes).decode()}}]}
             ]
             response = model.generate_content(contents)
-            translated_text = response.text.strip()
-            logger.info("Gemini processing successful")
-            return translated_text
+            transcribed_text = response.text.strip()
+            logger.info("Gemini OCR successful")
+            return transcribed_text
         except Exception as e:
-            logger.error(f"Gemini processing failed: {e}")
-            return f"處理失敗 / Processing failed: {str(e)}"
+            logger.error(f"Gemini OCR failed: {e}")
+            return f"OCR 失敗 / OCR failed: {str(e)}"
+
+    def process_image(self, img_array):
+        """舊邏輯：直接 OCR + 翻譯（如果需要，可保留或移除）"""
+        # 此方法可視需求保留，但根據新邏輯，不再直接使用
+        transcribed_text = self.ocr_image(img_array)
+        return self.translate_text(transcribed_text)
 
     def update_config(self, api_type, api_key, model, target_lang):
         """更新並儲存設定"""

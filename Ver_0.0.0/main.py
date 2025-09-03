@@ -2,9 +2,12 @@ import sys
 import os
 import logging
 import re
+import nltk
+import timeit
 from logging.handlers import RotatingFileHandler
 import requests  # For HTTPError
 from PyQt6 import QtWidgets, QtCore, QtGui
+from PyQt6.QtCore import QThread, pyqtSignal, QRunnable, QObject, QThreadPool
 from MainGUI import Ui_MainWindow
 from ocr_processor import OCR_Processor, OCR_Processor_Config
 from API_mode import APIMode
@@ -17,34 +20,26 @@ import torch
 
 # 日誌設定 / Logging configuration
 def setup_logging():
-    """設置日誌配置，為每個模組創建獨立處理器並支援旋轉和控制台輸出 / Set up logging configuration with separate handlers for each module, supporting rotation and console output"""
     LOG_FORMAT = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
     os.makedirs("Debug", exist_ok=True)
 
-    # 共用格式器 / Shared formatter
     formatter = logging.Formatter(LOG_FORMAT)
-
-    # 控制台處理器 / Console handler for all loggers
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setFormatter(formatter)
-    console_handler.setLevel(logging.DEBUG)  # 控制台顯示 DEBUG 級別以上 / Console shows DEBUG and above
+    console_handler.setLevel(logging.DEBUG)
 
-    # 為 main 創建旋轉檔案處理器 / Rotating file handler for main
     main_handler = RotatingFileHandler("Debug/Main.log", maxBytes=10*1024*1024, backupCount=5, encoding="utf-8")
     main_handler.setFormatter(formatter)
     main_handler.setLevel(logging.INFO)
 
-    # 為 ocr_processor 創建旋轉檔案處理器 / Rotating file handler for ocr_processor
     ocr_handler = RotatingFileHandler("Debug/OCR.log", maxBytes=10*1024*1024, backupCount=5, encoding="utf-8")
     ocr_handler.setFormatter(formatter)
     ocr_handler.setLevel(logging.DEBUG)
 
-    # 為 translater 創建單一旋轉檔案處理器（統一所有模型） / Rotating file handler for translater (unified for all models)
     translator_handler = RotatingFileHandler("Debug/Translater.log", maxBytes=10*1024*1024, backupCount=5, encoding="utf-8")
     translator_handler.setFormatter(formatter)
     translator_handler.setLevel(logging.DEBUG)
 
-    # 為每個模組的記錄器添加處理器（檔案 + 控制台） / Add handlers (file + console) to module loggers
     main_logger = logging.getLogger("main")
     main_logger.addHandler(main_handler)
     main_logger.addHandler(console_handler)
@@ -60,9 +55,108 @@ def setup_logging():
     translator_logger.addHandler(console_handler)
     translator_logger.propagate = False
 
-# 初始化日誌 / Initialize logging
+nltk.download('punkt', quiet=True)
 setup_logging()
 logger = logging.getLogger("main")
+logger.info("Logging system initialized")
+
+class TranslationWorker(QRunnable):
+    class Signals(QObject):
+        result = pyqtSignal(str)
+        error = pyqtSignal(str)
+        progress = pyqtSignal(int, int)
+
+    def __init__(self, text, api_mode, is_api_mode, translate_config, translator):
+        super().__init__()
+        self.signals = self.Signals()
+        self.text = text
+        self.api_mode = api_mode
+        self.is_api_mode = is_api_mode
+        self.translate_config = translate_config
+        self.translator = translator
+
+    def run(self):
+        try:
+            sentences = self.preprocess_text(self.text)
+            total_sentences = len(sentences)
+            translated_sentences = []
+            for i, sentence in enumerate(sentences):
+                if self.is_api_mode:
+                    translated_text = self.api_mode.translate_text(sentence)
+                else:
+                    translated_text = self.translator.translate(sentence, self.translate_config)
+                translated_sentences.append(translated_text)
+                self.signals.progress.emit(i + 1, total_sentences)
+            translated_text = "\n".join(translated_sentences)
+            self.signals.result.emit(translated_text)
+        except Exception as e:
+            self.signals.error.emit(str(e))
+
+    def preprocess_text(self, text):
+        sentences = nltk.sent_tokenize(text)
+        refined_sentences = []
+        for sentence in sentences:
+            sub_sentences = re.split(r'(?<=[.!?。！？])\s+', sentence)
+            refined_sentences.extend([s.strip() for s in sub_sentences if s.strip()])
+        return refined_sentences
+
+class OCRWorker(QRunnable):
+    class Signals(QObject):
+        result = pyqtSignal(str)
+        error = pyqtSignal(str)
+        progress = pyqtSignal(int)
+
+    def __init__(self, img_array, api_mode, is_api_mode, ocr_processor):
+        super().__init__()
+        self.signals = self.Signals()
+        self.img_array = img_array
+        self.api_mode = api_mode
+        self.is_api_mode = is_api_mode
+        self.ocr_processor = ocr_processor
+
+    def run(self):
+        try:
+            self.signals.progress.emit(0)
+            if self.is_api_mode:
+                transcribed_text = self.api_mode.ocr_image(self.img_array)
+            else:
+                predict_res = self.ocr_processor.ocr_predict(self.img_array)
+                all_text_list = self.ocr_processor.json_preview_and_get_all_text(predict_res)
+                transcribed_text = "\n".join(all_text_list)
+            self.signals.progress.emit(100)
+            self.signals.result.emit(transcribed_text)
+        except Exception as e:
+            self.signals.error.emit(str(e))
+            
+class APIWorker(QRunnable):
+    class Signals(QObject):
+        progress = pyqtSignal(int)
+        result = pyqtSignal(str)
+        error = pyqtSignal(str)
+
+    def __init__(self, img_array, api_mode, task="ocr"):
+        super().__init__()
+        self.signals = self.Signals()
+        self.img_array = img_array
+        self.api_mode = api_mode
+        self.task = task
+        logger.debug(f"APIWorker initialized with task: {task}")
+
+    def run(self):
+        try:
+            self.signals.progress.emit(0)
+            if self.task == "ocr":
+                text = self.api_mode.perform_ocr(self.img_array, self.signals.progress.emit)
+            else:
+                text = self.api_mode.process_image(self.img_array, self.signals.progress.emit)
+            if not text:
+                self.signals.error.emit("無有效結果 / No valid results")
+                return
+            self.signals.progress.emit(100)
+            self.signals.result.emit(text)
+        except Exception as e:
+            logger.error(f"APIWorker error in task {self.task}: {str(e)}")
+            self.signals.error.emit(str(e))
 
 class MainApplication(QtWidgets.QMainWindow, Ui_MainWindow):
     def __init__(self):
@@ -71,48 +165,38 @@ class MainApplication(QtWidgets.QMainWindow, Ui_MainWindow):
         self.setupUi(self)
         self.ocr_processor = None
         self.translator = None
+        self.api_mode = APIMode()
+        self.is_api_mode = False
         self.ocr_history = []
         self.translate_history = []
-        self.max_history = 5  # 限制歷史記錄最多5筆 / Limit history to 5 entries
+        self.max_history = 5
         self.init_components()
         self.setup_connections()
         self.load_history()
-        self.api_mode = APIMode()
-        self.is_api_mode = False  # 預設非 API mode
         logger.info("MainApplication initialization completed")
 
     def init_components(self):
-        """初始化 OCR 和翻譯器 / Initialize OCR and Translator"""
-        logger.info("Initializing components")
-        try:
-            ocr_config = OCR_Processor_Config()
-            self.ocr_processor = OCR_Processor(ocr_config)
-            logger.info("OCR Processor initialized successfully")
-        except Exception as e:
-            logger.error(f"Failed to initialize OCR Processor: {e}")
-            self.statusbar.showMessage("OCR 初始化失敗 / OCR initialization failed", 5000)
+        """初始化 OCR 和翻譯器 / Initialize OCR and translator"""
+        self.init_ocr_processor()
+        self.init_translator()
+        self.translate_config = TranslateConfig()
 
-        try:
-            nllb_config = NLLBConfig()
-            translate_config = TranslateConfig()
-            self.translator = NLLBTranslator(nllb_config)
-            self.translate_config = translate_config
-            self.translate_config.adjust_for_model(self.translator.cfg.model_name)  # 調整默認基於模型 / Adjust defaults based on model
-            logger.info("Translator initialized successfully")
-        except Exception as e:
-            logger.error(f"Failed to initialize Translator: {e}")
-            self.statusbar.showMessage("翻譯器初始化失敗 / Translator initialization failed", 5000)
+    def init_ocr_processor(self):
+        ocr_config = OCR_Processor_Config()
+        self.ocr_processor = OCR_Processor(ocr_config)
+
+    def init_translator(self):
+        nllb_config = NLLBConfig()
+        self.translator = NLLBTranslator(nllb_config)
 
     def setup_connections(self):
-        """設置按鈕和選單的連接 / Set up button and menu connections"""
-        logger.info("Setting up connections")
+        """設定按鈕連接 / Set up button connections"""
         self.OCR_Detect.clicked.connect(self.execute_ocr)
         self.Translate_action.clicked.connect(self.execute_translate)
         self.OCR_Detect_Copy.clicked.connect(self.copy_ocr_text)
         self.OCR_Detect_Clear.clicked.connect(self.clear_ocr_text)
         self.Translated_Text_Copy.clicked.connect(self.copy_translated_text)
         self.Translated_Text_Clear.clicked.connect(self.clear_translated_text)
-        
         self.actionSelect_Mode.triggered.connect(self.show_select_mode)
         self.actionOCR_Setting.triggered.connect(self.show_ocr_setting)
         self.actionTranslator_Setting.triggered.connect(self.show_translator_setting)
@@ -120,7 +204,7 @@ class MainApplication(QtWidgets.QMainWindow, Ui_MainWindow):
         self.actionShow_Translator_History.triggered.connect(self.show_translate_history)
         self.actionMain_Log.triggered.connect(lambda: self.show_log("Debug/Main.log"))
         self.actionOCR_Log.triggered.connect(lambda: self.show_log("Debug/OCR.log"))
-        self.actionTranslator_Log.triggered.connect(lambda: self.show_log("Debug/Translater.log"))  # 統一為單一 log / Unified to single log
+        self.actionTranslator_Log.triggered.connect(lambda: self.show_log("Debug/Translater.log")) 
 
     def load_history(self):
         """載入歷史記錄 / Load history"""
@@ -147,7 +231,7 @@ class MainApplication(QtWidgets.QMainWindow, Ui_MainWindow):
             logger.info("History saved successfully")
         except Exception as e:
             logger.error(f"Failed to save history: {e}")
-
+    
     def preprocess_ocr_text(self, text_list):
         """前處理 OCR 文本，僅保留完整句子 / Preprocess OCR text to keep only complete sentences"""
         logger.info("Preprocessing OCR text")
@@ -173,27 +257,20 @@ class MainApplication(QtWidgets.QMainWindow, Ui_MainWindow):
                 os.makedirs("screenshots", exist_ok=True)
                 img_array = selector.capture_screenshot(save_path=save_path, save_image=self.checkBox.isChecked())
                 if img_array is not None:
-                    if self.is_api_mode:
-                        # API mode: 直接 OCR + 翻譯到 Translated_Text
-                        translated_text = self.api_mode.process_image(img_array)
-                        self.Translated_Text.setPlainText(translated_text)
-                        self.translate_history.insert(0, {"timestamp": timestamp, "text": translated_text})
-                        self.translate_history = self.translate_history[:self.max_history]
-                        self.save_history()
-                        logger.info("API mode OCR + translation completed")
-                        self.statusbar.showMessage("API OCR + 翻譯完成 / API OCR + Translation completed", 5000)
-                    else:
-                        # 原有本地 OCR 邏輯
-                        predict_res = self.ocr_processor.ocr_predict(img_array)
-                        all_text = self.ocr_processor.json_preview_and_get_all_text(predict_res)
-                        processed_sentences = self.preprocess_ocr_text(all_text)
-                        text = "\n".join(processed_sentences)
-                        self.OCR_Detect_Text.setPlainText(text)
-                        self.ocr_history.insert(0, {"timestamp": timestamp, "text": text, "image_path": save_path if self.checkBox.isChecked() else None})
-                        self.ocr_history = self.ocr_history[:self.max_history]
-                        self.save_history()
-                        logger.info("Local OCR completed successfully with %d sentences", len(processed_sentences))
-                        self.statusbar.showMessage("OCR 完成 / OCR completed", 5000)
+                    progress = QtWidgets.QProgressDialog("正在辨識文字... / Recognizing text...", "取消 / Cancel", 0, 100, self)
+                    progress.setWindowModality(QtCore.Qt.WindowModality.WindowModal)
+                    progress.setMinimumDuration(0)
+                    progress.show()
+
+                    worker = OCRWorker(img_array, self.api_mode, self.is_api_mode, self.ocr_processor)
+                    worker.signals.result.connect(self.on_ocr_finished)
+                    worker.signals.error.connect(self.on_ocr_error)
+                    worker.signals.progress.connect(progress.setValue)
+                    worker.signals.result.connect(lambda: progress.close())
+                    worker.signals.error.connect(lambda: progress.close())
+                    QThreadPool.globalInstance().start(worker)
+
+                    progress.canceled.connect(lambda: QThreadPool.globalInstance().clear())
                 else:
                     logger.error("Failed to capture screenshot")
                     self.statusbar.showMessage("螢幕捕捉失敗 / Screenshot capture failed", 5000)
@@ -202,6 +279,19 @@ class MainApplication(QtWidgets.QMainWindow, Ui_MainWindow):
         except Exception as e:
             logger.error(f"Error in execute_ocr: {e}")
             self.statusbar.showMessage("OCR 處理失敗 / OCR processing failed", 5000)
+
+    def on_ocr_finished(self, transcribed_text):
+        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        self.OCR_Detect_Text.setPlainText(transcribed_text)
+        self.ocr_history.insert(0, {"timestamp": timestamp, "text": transcribed_text, "image_path": None})
+        self.ocr_history = self.ocr_history[:self.max_history]
+        self.save_history()
+        logger.info("OCR completed successfully")
+        self.statusbar.showMessage("OCR 完成 / OCR completed", 5000)
+
+    def on_ocr_error(self, error_msg):
+        self.statusbar.showMessage(f"OCR 失敗: {error_msg} / OCR failed: {error_msg}", 5000)
+        logger.error(f"OCR failed: {error_msg}")
 
     def execute_translate(self):
         """執行翻譯 / Execute translation"""
@@ -212,17 +302,53 @@ class MainApplication(QtWidgets.QMainWindow, Ui_MainWindow):
                 logger.warning("No text to translate")
                 self.statusbar.showMessage("無文本可翻譯 / No text to translate", 5000)
                 return
-            timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-            translated_text = self.translator.translate(text, self.translate_config)
-            self.Translated_Text.setPlainText(translated_text)
-            self.translate_history.insert(0, {"timestamp": timestamp, "text": translated_text})
-            self.translate_history = self.translate_history[:self.max_history]
-            self.save_history()
-            logger.info("Translation completed successfully")
-            self.statusbar.showMessage("翻譯完成 / Translation completed", 5000)
+
+            progress = QtWidgets.QProgressDialog("正在翻譯，請稍候... / Translating, please wait...", "取消 / Cancel", 0, 0, self)
+            progress.setWindowModality(QtCore.Qt.WindowModality.WindowModal)
+            progress.setMinimumDuration(0)
+            progress.show()
+
+            worker = TranslationWorker(text, self.api_mode, self.is_api_mode, self.translate_config, self.translator)
+            worker.signals.result.connect(self.on_translation_finished)
+            worker.signals.error.connect(self.on_translation_error)
+            worker.signals.progress.connect(lambda current, total: progress.setValue(int((current / total) * 100)))
+            worker.signals.result.connect(lambda: progress.close())
+            worker.signals.error.connect(lambda: progress.close())
+            QThreadPool.globalInstance().start(worker)
+
+            progress.canceled.connect(lambda: QThreadPool.globalInstance().clear())
+
         except Exception as e:
             logger.error(f"Error in execute_translate: {e}")
-            self.statusbar.showMessage("翻譯處理失敗 / Translation processing failed", 5000)
+            self.statusbar.showMessage(f"翻譯處理失敗 / Translation processing failed: {str(e)}", 5000)
+    
+    def preprocess_ocr_text(self, text_list):
+        """前處理 OCR 文本，僅保留完整句子 / Preprocess OCR text to keep only complete sentences"""
+        logger.info("Preprocessing OCR text")
+        full_text = " ".join(text_list)
+        # 使用 NLTK 進行句分割，支援多語言
+        sentences = nltk.sent_tokenize(full_text)
+        # 額外處理中文/日文句分割（因 NLTK 對亞洲語言分割不完美）
+        refined_sentences = []
+        for sentence in sentences:
+            # 匹配中文/日文句點（。！？）或英文句點 (.!?)
+            sub_sentences = re.split(r'(?<=[.!?。！？])\s+', sentence)
+            refined_sentences.extend([s.strip() for s in sub_sentences if s.strip()])
+        logger.info(f"Extracted {len(refined_sentences)} complete sentences")
+        return refined_sentences
+
+    def on_translation_finished(self, translated_text):
+        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        self.Translated_Text.setPlainText(translated_text)
+        self.translate_history.insert(0, {"timestamp": timestamp, "text": translated_text})
+        self.translate_history = self.translate_history[:self.max_history]
+        self.save_history()
+        self.statusbar.showMessage("翻譯完成 / Translation completed", 5000)
+        logger.info("Translation completed successfully")
+
+    def on_translation_error(self, error_msg):
+        self.statusbar.showMessage(f"翻譯失敗: {error_msg} / Translation failed: {error_msg}", 5000)
+        logger.error(f"Translation failed: {error_msg}")
 
     def copy_ocr_text(self):
         """複製 OCR 文本 / Copy OCR text"""
@@ -522,78 +648,74 @@ class MainApplication(QtWidgets.QMainWindow, Ui_MainWindow):
 
     def show_translator_setting(self):
         """顯示翻譯器設定對話框 / Show translator settings dialog"""
-        logger.info("Showing translator settings")
+        logger.debug("Showing translator settings")
         dialog = QtWidgets.QDialog(self)
-        dialog.setWindowTitle("翻譯設定 / Translator Settings")
+        dialog.setWindowTitle("翻譯器設定 / Translator Settings")
         layout = QtWidgets.QFormLayout()
 
-        # 模型選擇 / Model selection
+        # 模型選擇
         model_label = QtWidgets.QLabel("模型 / Model:")
         model_combo = QtWidgets.QComboBox()
-        model_combo.addItems([
-            "facebook/nllb-200-distilled-600M",
-            "facebook/nllb-200-distilled-1.3B",
-            "facebook/nllb-200-3.3B"
-        ])
+        model_combo.addItems(["facebook/nllb-200-distilled-600M", "facebook/nllb-200-distilled-1.3B", "facebook/nllb-200-3.3B"])
         model_combo.setCurrentText(self.translator.cfg.model_name)
         layout.addRow(model_label, model_combo)
 
-        # 源語言 / Source Language
+        # 源語言選擇
         src_label = QtWidgets.QLabel("源語言 / Source Language:")
         src_combo = QtWidgets.QComboBox()
-        src_combo.addItems(["jpn_Jpan", "zho_Hans", "eng_Latn"])
-        src_combo.setCurrentText(self.translator.cfg.src_language)
+        src_combo.addItems(["Auto", "English", "Japanese", "Simplified Chinese", "Traditional Chinese"])  # 使用自然名稱
+        src_combo.setCurrentText("Auto")  # 預設自動檢測
         layout.addRow(src_label, src_combo)
 
-        # 目標語言 / Target Language
+        # 目標語言選擇
         tgt_label = QtWidgets.QLabel("目標語言 / Target Language:")
         tgt_combo = QtWidgets.QComboBox()
-        tgt_combo.addItems(["eng_Latn", "zho_Hans", "jpn_Jpan"])
-        tgt_combo.setCurrentText(self.translator.cfg.tgt_language)
+        tgt_combo.addItems(["English", "Japanese", "Simplified Chinese", "Traditional Chinese"])  # 使用自然名稱
+        tgt_combo.setCurrentText("Traditional Chinese")  # 預設繁體中文
         layout.addRow(tgt_label, tgt_combo)
 
-        # 最大生成 token 數 / Max New Tokens
-        max_new_tokens_label = QtWidgets.QLabel("最大生成 token 數 / Max New Tokens:")
+        # 最大生成 token 數
+        max_new_tokens_label = QtWidgets.QLabel("最大生成 Token 數 / Max New Tokens:")
         max_new_tokens_spin = QtWidgets.QSpinBox()
-        max_new_tokens_spin.setRange(1, 1000)
+        max_new_tokens_spin.setRange(1, 1024)
         max_new_tokens_spin.setValue(self.translate_config.max_new_tokens)
         layout.addRow(max_new_tokens_label, max_new_tokens_spin)
 
-        # 最小長度 / Min Length
+        # 最小長度
         min_length_label = QtWidgets.QLabel("最小長度 / Min Length:")
         min_length_spin = QtWidgets.QSpinBox()
-        min_length_spin.setRange(0, 1000)
+        min_length_spin.setRange(0, 512)
         min_length_spin.setValue(self.translate_config.min_length)
         layout.addRow(min_length_label, min_length_spin)
 
-        # Beam 數 / Num Beams
+        # Beam 數
         num_beams_label = QtWidgets.QLabel("Beam 數 / Num Beams:")
         num_beams_spin = QtWidgets.QSpinBox()
-        num_beams_spin.setRange(1, 20)
+        num_beams_spin.setRange(1, 20)  # 修改上限為 20
         num_beams_spin.setValue(self.translate_config.num_beams)
         layout.addRow(num_beams_label, num_beams_spin)
 
-        # 提前停止 / Early Stopping
-        early_stopping_check = QtWidgets.QCheckBox("提前停止 / Early Stopping")
+        # 早期停止
+        early_stopping_check = QtWidgets.QCheckBox("早期停止 / Early Stopping")
         early_stopping_check.setChecked(self.translate_config.early_stopping)
         layout.addRow(early_stopping_check)
 
-        # 長度懲罰 / Length Penalty
+        # 長度懲罰
         length_penalty_label = QtWidgets.QLabel("長度懲罰 / Length Penalty:")
         length_penalty_spin = QtWidgets.QDoubleSpinBox()
-        length_penalty_spin.setRange(-5.0, 5.0)
+        length_penalty_spin.setRange(-2.0, 2.0)
         length_penalty_spin.setSingleStep(0.1)
         length_penalty_spin.setValue(self.translate_config.length_penalty)
         layout.addRow(length_penalty_label, length_penalty_spin)
 
-        # N-gram 重複限制 / No Repeat N-gram Size
-        no_repeat_ngram_size_label = QtWidgets.QLabel("N-gram 重複限制 / No Repeat N-gram Size:")
+        # 重複 N-gram 大小
+        no_repeat_ngram_size_label = QtWidgets.QLabel("重複 N-gram 大小 / No Repeat Ngram Size:")
         no_repeat_ngram_size_spin = QtWidgets.QSpinBox()
-        no_repeat_ngram_size_spin.setRange(0, 10)
+        no_repeat_ngram_size_spin.setRange(0, 5)
         no_repeat_ngram_size_spin.setValue(self.translate_config.no_repeat_ngram_size)
         layout.addRow(no_repeat_ngram_size_label, no_repeat_ngram_size_spin)
 
-        # 重複懲罰 / Repetition Penalty
+        # 重複懲罰
         repetition_penalty_label = QtWidgets.QLabel("重複懲罰 / Repetition Penalty:")
         repetition_penalty_spin = QtWidgets.QDoubleSpinBox()
         repetition_penalty_spin.setRange(1.0, 10.0)
@@ -601,12 +723,12 @@ class MainApplication(QtWidgets.QMainWindow, Ui_MainWindow):
         repetition_penalty_spin.setValue(self.translate_config.repetition_penalty)
         layout.addRow(repetition_penalty_label, repetition_penalty_spin)
 
-        # 隨機採樣 / Do Sample
+        # 隨機採樣
         do_sample_check = QtWidgets.QCheckBox("隨機採樣 / Do Sample")
         do_sample_check.setChecked(self.translate_config.do_sample)
         layout.addRow(do_sample_check)
 
-        # 溫度 / Temperature
+        # 溫度
         temperature_label = QtWidgets.QLabel("溫度 / Temperature:")
         temperature_spin = QtWidgets.QDoubleSpinBox()
         temperature_spin.setRange(0.1, 5.0)
@@ -629,12 +751,12 @@ class MainApplication(QtWidgets.QMainWindow, Ui_MainWindow):
         top_p_spin.setValue(self.translate_config.top_p)
         layout.addRow(top_p_label, top_p_spin)
 
-        # 確認按鈕 / Confirm buttons
+        # 確認按鈕
         btn_box = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.StandardButton.Ok | QtWidgets.QDialogButtonBox.StandardButton.Cancel)
         btn_box.accepted.connect(lambda: self.update_translator_config(
             model_combo.currentText(),
-            src_combo.currentText(),
-            tgt_combo.currentText(),
+            NLLBConfig.LANGUAGE_MAP.get(src_combo.currentText(), None) if src_combo.currentText() != "Auto" else None,
+            NLLBConfig.LANGUAGE_MAP.get(tgt_combo.currentText(), "zho_Hant"),
             max_new_tokens_spin.value(),
             min_length_spin.value(),
             num_beams_spin.value(),
@@ -650,22 +772,23 @@ class MainApplication(QtWidgets.QMainWindow, Ui_MainWindow):
         ))
         btn_box.rejected.connect(dialog.reject)
         layout.addWidget(btn_box)
-        
+
         dialog.setLayout(layout)
         dialog.exec()
 
     def update_translator_config(self, model_name, src_lang, tgt_lang, max_new_tokens, min_length, num_beams,
-                                early_stopping, length_penalty, no_repeat_ngram_size, repetition_penalty,
-                                do_sample, temperature, top_k, top_p, dialog):
+                            early_stopping, length_penalty, no_repeat_ngram_size, repetition_penalty,
+                            do_sample, temperature, top_k, top_p, dialog):
         """更新翻譯器配置 / Update translator configuration"""
         logger.debug(f"Updating translator config: model={model_name}, src_lang={src_lang}, tgt_lang={tgt_lang}")
         try:
             self.translator.cfg = NLLBConfig(
                 model_name=model_name,
-                src_language=src_lang,
+                src_language=src_lang,  # 接受 None 以支援自動檢測
                 tgt_language=tgt_lang,
                 torch_dtype=torch.float32,
-                low_cpu_mem_usage=True
+                low_cpu_mem_usage=True,
+                auth_token=None
             )
             self.translate_config = TranslateConfig(
                 max_new_tokens=max_new_tokens,
@@ -680,14 +803,15 @@ class MainApplication(QtWidgets.QMainWindow, Ui_MainWindow):
                 top_k=top_k,
                 top_p=top_p
             )
-            self.translate_config.adjust_for_model(model_name)  # 調整默認值 / Adjust defaults
+            self.translate_config.adjust_for_model(model_name)
             self.translator = NLLBTranslator(self.translator.cfg)
-            logger.info(f"Translator config updated successfully")
+            logger.info("Translator config updated successfully")
             self.statusbar.showMessage("翻譯設定已更新 / Translator Settings updated", 3000)
             dialog.accept()
         except Exception as e:
             logger.error(f"Failed to update translator config: {e}")
             self.statusbar.showMessage(f"翻譯設定更新失敗 / Failed to update translator settings: {str(e)}", 5000)
+
 
     def show_ocr_history(self):
         """顯示 OCR 歷史記錄 / Show OCR history"""

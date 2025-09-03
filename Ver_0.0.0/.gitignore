@@ -2,3 +2,7 @@
 *.json
 result
 __pycache__
+Debug
+test.py
+reference.txt
+.DS_Store

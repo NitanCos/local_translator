@@ -41,16 +41,16 @@ class OCR_Processor_Config:
 class OCR_Processor:
     def __init__(self, config: OCR_Processor_Config):
         self.config = config
-        logger.info("Initializing OCR_Processor with config: %s", config)
-        logger.info(f"語言: {config.lang}")
-        logger.info(f"使用文本圖像校正: {config.use_doc_unwarping}")
-        logger.info(f"使用文本行方向判斷: {config.use_textline_orientation}")
-        logger.info(f"使用文檔方向判斷: {config.use_doc_orientation_classify}")
-        logger.info(f"文本檢測限制邊長: {config.text_det_limit_side_len}")
-        logger.info(f"文本檢測限制類型: {config.text_det_limit_type}")
-        logger.info(f"文本檢測框閾值: {config.text_det_box_thresh}")
-        logger.info(f"文本檢測像素閾值: {config.text_det_thresh}")
-        logger.info(f"文本檢測擴張係數: {config.text_det_unclip_ratio}")
+        #logger.info("Initializing OCR_Processor with config: %s", config)
+        #logger.info(f"語言: {config.lang}")
+        #logger.info(f"使用文本圖像校正: {config.use_doc_unwarping}")
+        #logger.info(f"使用文本行方向判斷: {config.use_textline_orientation}")
+        #logger.info(f"使用文檔方向判斷: {config.use_doc_orientation_classify}")
+        #logger.info(f"文本檢測限制邊長: {config.text_det_limit_side_len}")
+        #logger.info(f"文本檢測限制類型: {config.text_det_limit_type}")
+        #logger.info(f"文本檢測框閾值: {config.text_det_box_thresh}")
+        #logger.info(f"文本檢測像素閾值: {config.text_det_thresh}")
+        #logger.info(f"文本檢測擴張係數: {config.text_det_unclip_ratio}")
         try:
             self.ocr = PaddleOCR( 
                 device=config.device,
