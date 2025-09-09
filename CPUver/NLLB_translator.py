@@ -71,7 +71,7 @@ class NLLBTranslator:
         self.cfg = cfg
         model_size = self._get_model_size(cfg.model_name)
         logger = get_logger()
-        logger.info("初始化 NLLBTranslator: model=%s, src_lang=%s, tgt_lang=%s, num_beams=%s", cfg.model_name, cfg.src_language, cfg.tgt_language, cfg.num_beams if hasattr(cfg, 'num_beams') else 'N/A')
+        logger.info("初始化 NLLBTranslator: model=%s, src_lang=%s, tgt_lang=%s", cfg.model_name, cfg.src_language, cfg.tgt_language)
 
         try:
             # 載入 tokenizer

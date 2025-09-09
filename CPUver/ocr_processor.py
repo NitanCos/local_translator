@@ -17,7 +17,7 @@ import re
 # 日誌設定
 LOG_FORMAT = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
 os.makedirs("Debug", exist_ok=True)  # 創建 Debug 目錄
-logging.basicConfig(level=logging.INFO, format=LOG_FORMAT, filename="Debug/OCR.log", encoding="utf-8")
+logging.basicConfig(level=logging.DEBUG, format=LOG_FORMAT, filename="Debug/OCR.log", encoding="utf-8")
 logger = logging.getLogger(__name__)
 
 @dataclass
@@ -91,9 +91,9 @@ class OCR_Processor:
         return image_array
     
     def _expand_input(self, input) : #將 inputs 扁平化並展開目錄、網址，回傳 list[Union[str, np.ndarray]]
-        logger.info(f"Expanding input: {input}")
+        #logger.info(f"Expanding input: {input}")
         if not isinstance(input, list): 
-            logger.info(f"Input is not a list, converting to list: {input}")
+            #logger.info(f"Input is not a list, converting to list: {input}")
             input = [input]
         output = []
         for item in input:
@@ -129,7 +129,7 @@ class OCR_Processor:
         # Predict return value: list of OCR 結果（依輸入順序扁平化）
         
         expanded_inputs = self._expand_input(predict_input)
-        logger.info(f"Expanded inputs: {expanded_inputs}")
+        #logger.info(f"Expanded inputs: {expanded_inputs}")
         predict_res = []
 
         for item in expanded_inputs:
@@ -148,7 +148,7 @@ class OCR_Processor:
             except Exception as e:
                 logger.error(f"Prediction failed: {e}")
                 continue
-            logger.info(f"Prediction result: {predict_res}")
+            #logger.info(f"Prediction result: {predict_res}")
         return predict_res
     
     def ocr_print(self, predict_res, format_json = bool, indent = int, ensure_ascii = bool):

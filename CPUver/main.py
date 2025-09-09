@@ -50,7 +50,7 @@ def setup_logging():
     main_logger = logging.getLogger("main")
     main_logger.addHandler(all_handler)  # 更改：使用 all_handler
     main_logger.addHandler(console_handler)
-    main_logger.setLevel(logging.INFO)  # 新增：明確設定 logger 級別（原本沒設，預設 WARNING）
+    main_logger.setLevel(logging.INFO)  # 新增：明確設定 logger 級別
     main_logger.propagate = False
 
     # OCR logger
@@ -228,9 +228,10 @@ class MainApplication(QtWidgets.QMainWindow, Ui_MainWindow):
         self.actionTranslator_Setting.triggered.connect(self.show_translator_setting)
         self.actionShow_Detect_History.triggered.connect(self.show_ocr_history)
         self.actionShow_Translator_History.triggered.connect(self.show_translate_history)
-        self.actionMain_Log.triggered.connect(lambda: self.show_log("Debug/Main.log"))
-        self.actionOCR_Log.triggered.connect(lambda: self.show_log("Debug/OCR.log"))
-        self.actionTranslator_Log.triggered.connect(lambda: self.show_log("Debug/Translater.log")) 
+        # self.actionMain_Log.triggered.connect(lambda: self.show_log("Debug/Main.log"))
+        # self.actionOCR_Log.triggered.connect(lambda: self.show_log("Debug/OCR.log"))
+        # self.actionTranslator_Log.triggered.connect(lambda: self.show_log("Debug/Translater.log")) 
+        self.actionAll_Log.triggered.connect(lambda: self.show_log("Debug/All.log"))
 
     def load_history(self):
         """載入歷史記錄 / Load history"""
@@ -689,6 +690,9 @@ class MainApplication(QtWidgets.QMainWindow, Ui_MainWindow):
         dialog = QtWidgets.QDialog(self)
         dialog.setWindowTitle("翻譯器設定 / Translator Settings")
         layout = QtWidgets.QFormLayout()
+        
+        # 定義反向語言映射（從代碼到顯示名稱）
+        INV_LANGUAGE_MAP = {v: k for k, v in NLLBConfig.LANGUAGE_MAP.items()}
 
         # 模型選擇
         model_label = QtWidgets.QLabel("模型 / Model:")
@@ -697,38 +701,41 @@ class MainApplication(QtWidgets.QMainWindow, Ui_MainWindow):
         model_combo.setCurrentText(self.translator.cfg.model_name)
         layout.addRow(model_label, model_combo)
 
-        # 源語言選擇
+        # 源語言選擇（從當前 cfg 載入）
         src_label = QtWidgets.QLabel("源語言 / Source Language:")
         src_combo = QtWidgets.QComboBox()
-        src_combo.addItems(["Auto", "English", "Japanese", "Simplified Chinese", "Traditional Chinese"])  # 使用自然名稱
-        src_combo.setCurrentText("Auto")  # 預設自動檢測
+        src_combo.addItems(["Auto", "English", "Japanese", "Simplified Chinese", "Traditional Chinese"])
+        if self.translator.cfg.src_language is None:
+            src_combo.setCurrentText("Auto")  # 如果 None，顯示 Auto
+        else:
+            src_combo.setCurrentText(INV_LANGUAGE_MAP.get(self.translator.cfg.src_language, "Auto"))  # 否則載入對應顯示名稱
         layout.addRow(src_label, src_combo)
 
-        # 目標語言選擇
+        # 目標語言選擇（從當前 cfg 載入）
         tgt_label = QtWidgets.QLabel("目標語言 / Target Language:")
         tgt_combo = QtWidgets.QComboBox()
-        tgt_combo.addItems(["English", "Japanese", "Simplified Chinese", "Traditional Chinese"])  # 使用自然名稱
-        tgt_combo.setCurrentText("Traditional Chinese")  # 預設繁體中文
+        tgt_combo.addItems(["English", "Japanese", "Simplified Chinese", "Traditional Chinese"])
+        tgt_combo.setCurrentText(INV_LANGUAGE_MAP.get(self.translator.cfg.tgt_language, "Traditional Chinese"))  # 載入對應顯示名稱
         layout.addRow(tgt_label, tgt_combo)
 
         # 最大生成 token 數
         max_new_tokens_label = QtWidgets.QLabel("最大生成 Token 數 / Max New Tokens:")
         max_new_tokens_spin = QtWidgets.QSpinBox()
-        max_new_tokens_spin.setRange(1, 1024)
+        max_new_tokens_spin.setRange(1, 2048)
         max_new_tokens_spin.setValue(self.translate_config.max_new_tokens)
         layout.addRow(max_new_tokens_label, max_new_tokens_spin)
 
         # 最小長度
         min_length_label = QtWidgets.QLabel("最小長度 / Min Length:")
         min_length_spin = QtWidgets.QSpinBox()
-        min_length_spin.setRange(0, 512)
+        min_length_spin.setRange(0, 1024)
         min_length_spin.setValue(self.translate_config.min_length)
         layout.addRow(min_length_label, min_length_spin)
 
         # Beam 數
         num_beams_label = QtWidgets.QLabel("Beam 數 / Num Beams:")
         num_beams_spin = QtWidgets.QSpinBox()
-        num_beams_spin.setRange(1, 20)  # 修改上限為 20
+        num_beams_spin.setRange(1, 20)  
         num_beams_spin.setValue(self.translate_config.num_beams)
         layout.addRow(num_beams_label, num_beams_spin)
 
