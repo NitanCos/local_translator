@@ -22,15 +22,15 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class OCR_Processor_Config:
-    lang: str = 'japan' #語言
+    lang: str = 'en' #語言
     device: str = 'cpu' #設備
-    cpu_threads: int = 10 #CPU 線程數
+    cpu_threads: int = 12 #CPU 線程數
     enable_hpi: bool = False #是否啟用高性能推理
     enable_mkldnn: bool = False #是否啟用 MKLDNN
     use_doc_unwarping: bool = True  #文本圖像校正
     use_textline_orientation: bool = False  #文本行方向判斷
     use_doc_orientation_classify: bool = False  #文檔方向判斷
-    text_det_limit_side_len: int = 64  #文本檢測限制邊長
+    text_det_limit_side_len: int = 16  #文本檢測限制邊長
     text_det_limit_type: str = "min"  #文本檢測限制類型
     text_det_box_thresh: float = 0.3  #文本檢測框閾值
     text_det_thresh: float = 0.3  #文本檢測像素閾值

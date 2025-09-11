@@ -8,7 +8,6 @@ import os
 from google.generativeai import GenerativeModel, configure
 import google.generativeai as genai
 from ocr_processor import OCR_Processor, OCR_Processor_Config
-import nltk
 import re
 
 # 日誌設定
@@ -18,8 +17,7 @@ logger.setLevel(logging.DEBUG)
 # 儲存 API 設定的檔案
 CONFIG_FILE = "api_config.json"
 
-# 下載 NLTK 數據
-nltk.download('punkt', quiet=True)
+
 
 class APIConfig:
     def __init__(self, api_type="Gemini", api_key="", model="", target_lang="Traditional Chinese"):
@@ -118,47 +116,83 @@ class APIMode:
         except Exception as e:
             logger.error(f"Gemini test failed: {e}")
             return False, f"測試失敗 / Test failed: {str(e)}"
+        
+    def perform_ocr(self, img_array, progress_callback, worker=None):
+        """執行 OCR，支援取消檢查"""
+        if worker and worker.is_canceled:
+            logger.info("OCR canceled before starting")
+            return None
+        progress_callback(0)
+        text = self.ocr_image(img_array)
+        if worker and worker.is_canceled:
+            logger.info("OCR canceled after processing")
+            return None
+        progress_callback(100)
+        return text
+    
+    def format_ocr_text(self, text):
+        text = re.sub(r'\s+', ' ', text).strip()
+        sentences = re.split(r'(?<=[\n。！？])', text)
+        formatted = '\n'.join(s.strip() for s in sentences if s.strip())
+        return formatted
 
-    def translate_text(self, text):
+    def translate_text(self, text, worker=None):
         """翻譯純文字，回傳翻譯結果"""
+        if worker and worker.is_canceled:
+            logger.info("Translation canceled before starting")
+            return None
         if self.config.api_type == "DeepL":
-            return self._translate_deepl(text)
+            return self._translate_deepl(text, worker)
         elif self.config.api_type == "Gemini":
-            return self._translate_gemini(text)
+            return self._translate_gemini(text, worker)
         else:
             raise ValueError("未知的 API 類型 / Unknown API type")
 
-    def _translate_deepl(self, text):
-        """使用 DeepL 翻譯文字"""
+    def _translate_deepl(self, text, worker=None):
+        """使用 DeepL 翻译文字，支持多段落和格式保留"""
+        if worker and worker.is_canceled:
+            logger.info("DeepL translation canceled before starting")
+            return None
         url = "https://api-free.deepl.com/v2/translate"
         lang_code = {
             "Traditional Chinese": "ZH-HANT",
             "English": "EN",
             "Japanese": "JA"
         }.get(self.config.target_lang, "EN")
+        # 将文本按段落分割为列表，DeepL 支持多文本输入
+        paragraphs = text.split('\n') if '\n' in text else [text]
         params = {
             "auth_key": self.config.api_key,
-            "text": text,
-            "target_lang": lang_code
+            "text": paragraphs,  # 传入文本列表
+            "target_lang": lang_code,
+            "preserve_formatting": "1"  # 保留格式（0 或 1）
         }
         try:
             response = requests.post(url, data=params)
+            if worker and worker.is_canceled:
+                logger.info("DeepL translation canceled after API call")
+                return None
             response.raise_for_status()
             data = response.json()
-            translated_text = data["translations"][0]["text"]
-            logger.info("DeepL text translation successful")
+            # 合并所有翻译结果，保留换行
+            translated_paragraphs = [t["text"] for t in data["translations"]]
+            translated_text = '\n'.join(translated_paragraphs)
+            logger.info("DeepL text translation successful, paragraphs: %d", len(translated_paragraphs))
+            logger.debug("Translated text: %s", translated_text[:50])
             return translated_text
         except Exception as e:
             logger.error(f"DeepL text translation failed: {e}")
-            return f"文字翻譯失敗 / Text translation failed: {str(e)}"
-
-    def _translate_gemini(self, text):
+            return f"文字翻译失败 / Text translation failed: {str(e)}"
+        
+    def _translate_gemini(self, text, worker=None):
         """使用 Gemini 翻譯文字"""
+        if worker and worker.is_canceled:
+            logger.info("Gemini translation canceled before starting")
+            return None
         try:
             configure(api_key=self.config.api_key)
             model = GenerativeModel(self.config.model or "gemini-1.5-flash")
 
-            # 提示詞，基於 translate_image.py 的結構，簡化為純文字翻譯
             prompt = """
             Role: Professional Text Translator
 
@@ -180,6 +214,9 @@ class APIMode:
             """.format(target_lang=self.config.target_lang)
 
             response = model.generate_content(prompt + "\n\nInput text:\n" + text)
+            if worker and worker.is_canceled:
+                logger.info("Gemini translation canceled after API call")
+                return None
             translated_text = response.text.strip()
             logger.info("Gemini text translation successful")
             return translated_text
@@ -196,31 +233,37 @@ class APIMode:
         else:
             raise ValueError("未知的 API 類型 / Unknown API type")
 
-    def _ocr_deepl(self, img_array):
-        """使用本地 OCR 辨識文字"""
+    def _ocr_deepl(self, img_array, worker=None):
+        if worker and worker.is_canceled:
+            logger.info("DeepL OCR canceled before starting")
+            return None
         self.init_ocr()
         predict_res = self.ocr_processor.ocr_predict(img_array)
+        if worker and worker.is_canceled:
+            logger.info("DeepL OCR canceled after prediction")
+            return None
         all_text_list = self.ocr_processor.json_preview_and_get_all_text(predict_res)
         text = "\n".join(all_text_list)
         if not text:
             return "無偵測到文字 / No text detected"
+        formatted_text = self.format_ocr_text(text)
         logger.info("DeepL OCR successful")
-        return text
+        return formatted_text
 
-    def _ocr_gemini(self, img_array):
+    def _ocr_gemini(self, img_array, worker=None):
         """使用 Gemini 辨識圖片文字（未翻譯）"""
+        if worker and worker.is_canceled:
+            logger.info("Gemini OCR canceled before starting")
+            return None
         try:
             configure(api_key=self.config.api_key)
             model = GenerativeModel(self.config.model or "gemini-1.5-flash")
 
-            # 將 NumPy 陣列轉為 PIL Image 並存為 bytes (JPEG)
             img = Image.fromarray(img_array)
             buffered = BytesIO()
             img.save(buffered, format="JPEG")
             img_bytes = buffered.getvalue()
 
-            # 提示詞參考 translate_image.py 的 get_prompt，但修改為純辨識未翻譯
-            # 參考：https://github.com/google/generative-ai-python/issues/112 中的 OCR Prompt 示例，並調整為保留格式
             prompt = """
             Role: Professional Image Text Recognizer
 
@@ -241,25 +284,40 @@ class APIMode:
             6. Output the result as the transcribed text only, with sentences separated by newlines if appropriate.
             """
 
-            # 使用 Gemini 生成內容
             contents = [
                 {"role": "user", "parts": [{"text": prompt}]},
                 {"role": "user", "parts": [{"inline_data": {"mime_type": "image/jpeg", "data": base64.b64encode(img_bytes).decode()}}]}
             ]
             response = model.generate_content(contents)
+            if worker and worker.is_canceled:
+                logger.info("Gemini OCR canceled after API call")
+                return None
             transcribed_text = response.text.strip()
+            formatted_text = self.format_ocr_text(transcribed_text)
             logger.info("Gemini OCR successful")
-            return transcribed_text
+            return formatted_text
         except Exception as e:
             logger.error(f"Gemini OCR failed: {e}")
             return f"OCR 失敗 / OCR failed: {str(e)}"
 
-    def process_image(self, img_array):
-        """舊邏輯：直接 OCR + 翻譯（如果需要，可保留或移除）"""
-        # 此方法可視需求保留，但根據新邏輯，不再直接使用
-        transcribed_text = self.ocr_image(img_array)
-        return self.translate_text(transcribed_text)
-
+    def process_image(self, img_array, progress_callback, worker=None):
+        """執行圖像處理（OCR + 翻譯），支援取消檢查"""
+        if worker and worker.is_canceled:
+            logger.info("Image processing canceled before starting")
+            return None
+        progress_callback(0)
+        text = self.ocr_image(img_array)
+        if worker and worker.is_canceled:
+            logger.info("Image processing canceled after OCR")
+            return None
+        progress_callback(50)
+        translated_text = self.translate_text(text)
+        if worker and worker.is_canceled:
+            logger.info("Image processing canceled after translation")
+            return None
+        progress_callback(100)
+        return translated_text
+    
     def update_config(self, api_type, api_key, model, target_lang):
         """更新並儲存設定"""
         self.config.api_type = api_type

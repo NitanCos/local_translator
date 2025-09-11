@@ -17,7 +17,7 @@ class NLLBConfig:
     """
     模型與認證相關設定
     """
-    model_name: str = "facebook/nllb-200-distilled-600M"
+    model_name: str = "facebook/nllb-200-distilled-1.3B"
     src_language: str = None  # 預設 None，允許自動檢測
     tgt_language: str = "zho_Hant"  # 預設繁體中文
     torch_dtype: torch.dtype = torch.float32
@@ -37,12 +37,12 @@ class TranslateConfig:
     """
     max_new_tokens: int = 100
     min_length: int = 0
-    num_beams: int = field(default_factory=lambda: 5)  # 默認 5
+    num_beams: int = field(default_factory=lambda: 15)  
     early_stopping: bool = False
     length_penalty: float = 1.0
     no_repeat_ngram_size: int = 0
     repetition_penalty: float = 1.2
-    do_sample: bool = False
+    do_sample: bool = True
     temperature: float = 1.0
     top_k: int = 50
     top_p: float = 1.0
@@ -52,19 +52,19 @@ class TranslateConfig:
         """根據模型名稱調整默認生成參數"""
         if "600M" in model_name:
             self.num_beams = min(self.num_beams, 10)  # 600M 模型限制為 10
-            self.early_stopping = False
-            self.no_repeat_ngram_size = 0
-            self.repetition_penalty = 1.2
+            #self.early_stopping = False
+            # self.no_repeat_ngram_size = 0
+            # self.repetition_penalty = 1.2
         elif "1.3B" in model_name:
             self.num_beams = min(self.num_beams, 15)  # 1.3B 模型限制為 15
-            self.early_stopping = True
-            self.no_repeat_ngram_size = 2
-            self.repetition_penalty = 1.2
+            #self.early_stopping = False
+            # self.no_repeat_ngram_size = 2
+            # self.repetition_penalty = 1.2
         elif "3.3B" in model_name:
             self.num_beams = min(self.num_beams, 20)  # 3.3B 模型允許最大 20
-            self.early_stopping = True
-            self.no_repeat_ngram_size = 0
-            self.repetition_penalty = 1.0
+            # self.early_stopping = False
+            # self.no_repeat_ngram_size = 0
+            # self.repetition_penalty = 1.0
 
 class NLLBTranslator:
     def __init__(self, cfg: NLLBConfig):

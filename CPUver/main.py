@@ -2,7 +2,6 @@ import sys
 import os
 import logging
 import re
-import nltk
 import timeit
 from logging.handlers import RotatingFileHandler
 import requests  # For HTTPError
@@ -79,110 +78,120 @@ def setup_logging():
     region_logger.addHandler(console_handler)
     region_logger.setLevel(logging.DEBUG)
 
-    # 如果有其他模組的 logger，可以在此類似添加
 
-nltk.download('punkt', quiet=True)
+
 setup_logging()
 logger = logging.getLogger("main")
 logger.info("Logging system initialized")
 
-class TranslationWorker(QRunnable):
-    class Signals(QObject):
-        result = pyqtSignal(str)
-        error = pyqtSignal(str)
-        progress = pyqtSignal(int, int)
+class TranslationWorker(QObject):  # 改為 QObject
+    result = pyqtSignal(str)
+    error = pyqtSignal(str)
+    progress = pyqtSignal(int, int)
 
     def __init__(self, text, api_mode, is_api_mode, translate_config, translator):
         super().__init__()
-        self.signals = self.Signals()
         self.text = text
         self.api_mode = api_mode
         self.is_api_mode = is_api_mode
         self.translate_config = translate_config
         self.translator = translator
+        self.is_canceled = False  # 新增取消旗標
 
     def run(self):
         try:
-            sentences = self.preprocess_text(self.text)
-            total_sentences = len(sentences)
-            translated_sentences = []
-            for i, sentence in enumerate(sentences):
+            paragraphs = self.preprocess_text(self.text)
+            translated_paragraphs = []
+            for paragraph in paragraphs:
+                if self.is_canceled: return
                 if self.is_api_mode:
-                    translated_text = self.api_mode.translate_text(sentence)
+                    translated_text = self.api_mode.translate_text(paragraph, self)
                 else:
-                    translated_text = self.translator.translate(sentence, self.translate_config)
-                translated_sentences.append(translated_text)
-                self.signals.progress.emit(i + 1, total_sentences)
-            translated_text = "\n".join(translated_sentences)
-            self.signals.result.emit(translated_text)
+                    translated_text = self.translator.translate(paragraph, self.translate_config)
+                if self.is_canceled: return
+                translated_paragraphs.append(translated_text)
+            if self.is_canceled: return
+            translated_text = "\n\n".join(translated_paragraphs)
+            self.result.emit(translated_text)
         except Exception as e:
-            self.signals.error.emit(str(e))
+            self.error.emit(str(e))
 
     def preprocess_text(self, text):
-        sentences = nltk.sent_tokenize(text)
-        refined_sentences = []
-        for sentence in sentences:
-            sub_sentences = re.split(r'(?<=[.!?。！？])\s+', sentence)
-            refined_sentences.extend([s.strip() for s in sub_sentences if s.strip()])
-        return refined_sentences
-
-class OCRWorker(QRunnable):
-    class Signals(QObject):
-        result = pyqtSignal(str)
-        error = pyqtSignal(str)
-        progress = pyqtSignal(int)
+        """前处理文本以便翻译：按段落分割，保留换行 / Preprocess text for translation: split into paragraphs, preserve newlines"""
+        logger.debug("Preprocessing text for translation: %s", text[:50])
+        lines = text.splitlines()
+        paragraphs = []
+        current_para = []
+        for line in lines:
+            if line.strip():  # 非空行，添加到当前段落
+                current_para.append(line)
+            else:  # 空行，结束当前段落
+                if current_para:  # 如果当前段落不为空，加入 paragraphs
+                    paragraphs.append('\n'.join(current_para))
+                    current_para = []
+        if current_para:  # 添加最后一个段落
+            paragraphs.append('\n'.join(current_para))
+        logger.debug("Preprocessed paragraphs: %d paragraphs", len(paragraphs))
+        return paragraphs
+    
+class OCRWorker(QObject):  # 改為 QObject
+    result = pyqtSignal(str)
+    error = pyqtSignal(str)
+    progress = pyqtSignal(int)
 
     def __init__(self, img_array, api_mode, is_api_mode, ocr_processor):
         super().__init__()
-        self.signals = self.Signals()
         self.img_array = img_array
         self.api_mode = api_mode
         self.is_api_mode = is_api_mode
         self.ocr_processor = ocr_processor
+        self.is_canceled = False  # 新增取消旗標
 
-    def run(self):
+    def run(self):  # 改為 run() 方法（非 slot，但可連接）
         try:
-            self.signals.progress.emit(0)
+            self.progress.emit(0)
+            if self.is_canceled: return  # 立即檢查取消
             if self.is_api_mode:
                 transcribed_text = self.api_mode.ocr_image(self.img_array)
             else:
                 predict_res = self.ocr_processor.ocr_predict(self.img_array)
+                if self.is_canceled: return  # 在預測後檢查（若預測是長任務，可在內部循環檢查）
                 all_text_list = self.ocr_processor.json_preview_and_get_all_text(predict_res)
                 transcribed_text = "\n".join(all_text_list)
-            self.signals.progress.emit(100)
-            self.signals.result.emit(transcribed_text)
+            if self.is_canceled: return  # 最終檢查
+            self.progress.emit(100)
+            self.result.emit(transcribed_text)
         except Exception as e:
-            self.signals.error.emit(str(e))
+            self.error.emit(str(e))
             
-class APIWorker(QRunnable):
-    class Signals(QObject):
-        progress = pyqtSignal(int)
-        result = pyqtSignal(str)
-        error = pyqtSignal(str)
+class APIWorker(QObject):  # 改為 QObject
+    progress = pyqtSignal(int)
+    result = pyqtSignal(str)
+    error = pyqtSignal(str)
 
     def __init__(self, img_array, api_mode, task="ocr"):
         super().__init__()
-        self.signals = self.Signals()
         self.img_array = img_array
         self.api_mode = api_mode
         self.task = task
+        self.is_canceled = False  # 新增取消旗標
         logger.debug(f"APIWorker initialized with task: {task}")
 
     def run(self):
         try:
-            self.signals.progress.emit(0)
+            if self.is_canceled: return  # 检查取消
             if self.task == "ocr":
-                text = self.api_mode.perform_ocr(self.img_array, self.signals.progress.emit)
+                text = self.api_mode.perform_ocr(self.img_array, lambda x: None, self)  # 传递空回调
             else:
-                text = self.api_mode.process_image(self.img_array, self.signals.progress.emit)
+                text = self.api_mode.process_image(self.img_array, lambda x: None, self)
+            if self.is_canceled: return  # 再次检查取消
             if not text:
-                self.signals.error.emit("無有效結果 / No valid results")
+                self.error.emit("無有效結果 / No valid results")
                 return
-            self.signals.progress.emit(100)
-            self.signals.result.emit(text)
+            self.result.emit(text)
         except Exception as e:
             logger.error(f"APIWorker error in task {self.task}: {str(e)}")
-            self.signals.error.emit(str(e))
+            self.error.emit(str(e))
 
 class MainApplication(QtWidgets.QMainWindow, Ui_MainWindow):
     def __init__(self):
@@ -284,33 +293,61 @@ class MainApplication(QtWidgets.QMainWindow, Ui_MainWindow):
                 os.makedirs("screenshots", exist_ok=True)
                 img_array = selector.capture_screenshot(save_path=save_path, save_image=self.checkBox.isChecked())
                 if img_array is not None:
-                    progress = QtWidgets.QProgressDialog("正在辨識文字... / Recognizing text...", "取消 / Cancel", 0, 100, self)
+                    progress = QtWidgets.QProgressDialog("正在辨識文字... / Recognizing text...", "取消 / Cancel", 0, 0, self)
                     progress.setWindowModality(QtCore.Qt.WindowModality.WindowModal)
                     progress.setMinimumDuration(0)
                     progress.show()
 
-                    worker = OCRWorker(img_array, self.api_mode, self.is_api_mode, self.ocr_processor)
-                    worker.signals.result.connect(self.on_ocr_finished)
-                    worker.signals.error.connect(self.on_ocr_error)
-                    worker.signals.progress.connect(progress.setValue)
-                    worker.signals.result.connect(lambda: progress.close())
-                    worker.signals.error.connect(lambda: progress.close())
-                    QThreadPool.globalInstance().start(worker)
+                    if self.is_api_mode:
+                        worker = APIWorker(img_array, self.api_mode, task="ocr")  # 使用 APIWorker
+                    else:
+                        worker = OCRWorker(img_array, self.api_mode, self.is_api_mode, self.ocr_processor)
 
-                    progress.canceled.connect(lambda: QThreadPool.globalInstance().clear())
+                    thread = QThread()  # 新建 QThread
+                    worker.moveToThread(thread)  # 移動 worker 到 thread
+                    thread.started.connect(worker.run)  # 連接 run 方法
+
+                    # 連接信號
+                    worker.result.connect(self.on_ocr_finished)
+                    worker.error.connect(self.on_ocr_error)
+                    worker.result.connect(thread.quit)  # 完成後終止 thread
+                    worker.error.connect(thread.quit)
+                    worker.result.connect(lambda: progress.close())
+                    worker.error.connect(lambda: progress.close())
+
+                    # 取消邏輯
+                    def cancel_task():
+                        worker.is_canceled = True  # 設置取消旗標
+                        thread.quit()  # 請求終止 thread
+                        thread.wait()  # 等待 thread 結束
+                        progress.close()
+                        self.statusbar.showMessage("OCR 操作已取消 / OCR operation canceled", 5000)
+
+                    progress.canceled.connect(cancel_task)
+
+                    thread.start()  # 啟動 thread
                 else:
                     logger.error("Failed to capture screenshot")
                     self.statusbar.showMessage("螢幕捕捉失敗 / Screenshot capture failed", 5000)
             else:
-                logger.info("Region selection cancelled")
+                logger.info("Region selection canceled")
         except Exception as e:
-            logger.error(f"Error in execute_ocr: {e}")
-            self.statusbar.showMessage("OCR 處理失敗 / OCR processing failed", 5000)
+            logger.error(f"OCR execution failed: {e}")
+            self.statusbar.showMessage(f"OCR 執行失敗 / OCR execution failed: {str(e)}", 5000)
 
+    def format_ocr_text(self, text):
+        """规则排列 OCR 文本：去除多余空格，按句子分割并添加换行"""
+        import re
+        text = re.sub(r'\s+', ' ', text).strip()  # 去除多余空格
+        sentences = re.split(r'(?<=[\n。！？])', text)  # 按句尾标点分割
+        formatted = '\n'.join(s.strip() for s in sentences if s.strip())
+        return formatted
+    
     def on_ocr_finished(self, transcribed_text):
+        formatted_text = self.format_ocr_text(transcribed_text)
         timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-        self.OCR_Detect_Text.setPlainText(transcribed_text)
-        self.ocr_history.insert(0, {"timestamp": timestamp, "text": transcribed_text, "image_path": None})
+        self.OCR_Detect_Text.setPlainText(formatted_text)
+        self.ocr_history.insert(0, {"timestamp": timestamp, "text": formatted_text, "image_path": None})
         self.ocr_history = self.ocr_history[:self.max_history]
         self.save_history()
         logger.info("OCR completed successfully")
@@ -321,47 +358,85 @@ class MainApplication(QtWidgets.QMainWindow, Ui_MainWindow):
         logger.error(f"OCR failed: {error_msg}")
 
     def execute_translate(self):
-        """執行翻譯 / Execute translation"""
         logger.info("Executing translation")
         try:
             text = self.OCR_Detect_Text.toPlainText()
-            if not text:
-                logger.warning("No text to translate")
-                self.statusbar.showMessage("無文本可翻譯 / No text to translate", 5000)
+            if not text.strip():
+                self.statusbar.showMessage("無文字可翻譯 / No text to translate", 5000)
                 return
 
-            progress = QtWidgets.QProgressDialog("正在翻譯，請稍候... / Translating, please wait...", "取消 / Cancel", 0, 0, self)
+            progress = QtWidgets.QProgressDialog("正在翻譯... / Translating...", "取消 / Cancel", 0, 0, self)
             progress.setWindowModality(QtCore.Qt.WindowModality.WindowModal)
             progress.setMinimumDuration(0)
             progress.show()
 
             worker = TranslationWorker(text, self.api_mode, self.is_api_mode, self.translate_config, self.translator)
-            worker.signals.result.connect(self.on_translation_finished)
-            worker.signals.error.connect(self.on_translation_error)
-            worker.signals.progress.connect(lambda current, total: progress.setValue(int((current / total) * 100)))
-            worker.signals.result.connect(lambda: progress.close())
-            worker.signals.error.connect(lambda: progress.close())
-            QThreadPool.globalInstance().start(worker)
+            thread = QThread()  # 新建 QThread
+            worker.moveToThread(thread)
+            thread.started.connect(worker.run)
 
-            progress.canceled.connect(lambda: QThreadPool.globalInstance().clear())
+            # 連接信號
+            worker.result.connect(self.on_translation_finished)
+            worker.error.connect(self.on_translation_error)
+            # worker.progress.connect(lambda current, total: progress.setValue(int(current / total * 100)))
+            worker.result.connect(thread.quit)
+            worker.error.connect(thread.quit)
+            worker.result.connect(lambda: progress.close())
+            worker.error.connect(lambda: progress.close())
 
+            # 取消邏輯
+            def cancel_task():
+                worker.is_canceled = True
+                thread.quit()
+                thread.wait()
+                progress.close()
+                self.statusbar.showMessage("翻譯操作已取消 / Translation operation canceled", 5000)
+
+            progress.canceled.connect(cancel_task)
+
+            thread.start()
         except Exception as e:
-            logger.error(f"Error in execute_translate: {e}")
-            self.statusbar.showMessage(f"翻譯處理失敗 / Translation processing failed: {str(e)}", 5000)
+            logger.error(f"Translation execution failed: {e}")
+            self.statusbar.showMessage(f"翻譯執行失敗 / Translation execution failed: {str(e)}", 5000)
     
-    def preprocess_ocr_text(self, text_list):
-        """前處理 OCR 文本，僅保留完整句子 / Preprocess OCR text to keep only complete sentences"""
-        logger.info("Preprocessing OCR text")
-        full_text = " ".join(text_list)
-        # 使用 NLTK 進行句分割，支援多語言
-        sentences = nltk.sent_tokenize(full_text)
-        # 額外處理中文/日文句分割（因 NLTK 對亞洲語言分割不完美）
+    def preprocess_text(self, text):
+        """改進中日文斷句，支援全形標點（。！？）並保留格式"""
+        logger.debug("Preprocessing text for translation: %s", text[:50])
+        
+        # 定義全形句末標點，排除逗號等非句末標點
+        sentence_end_pattern = r'(?<=[\n。！？])(?![。！？])'
+        
+        # 先按換行分割，保留原始換行
+        lines = text.splitlines()
+        sentences = []
+        
+        for line in lines:
+            # 檢查是否為項目符號行（例如 -, *, 1. 等）
+            line = line.strip()
+            if not line:
+                continue  # 跳過空行
+            is_bullet = bool(re.match(r'^[\-\*]\s+|^[\d]+\.\s+', line))
+            
+            # 按全形標點分割句子
+            sub_sentences = re.split(sentence_end_pattern, line)
+            # 清理並過濾空句子
+            sub_sentences = [s.strip() for s in sub_sentences if s.strip()]
+            
+            # 如果是項目符號行，保留整行作為單一句子
+            if is_bullet:
+                sentences.append(line)
+            else:
+                sentences.extend(sub_sentences)
+        
+        # 進一步清理：移除空句子並確保每句以標點或換行結尾
         refined_sentences = []
-        for sentence in sentences:
-            # 匹配中文/日文句點（。！？）或英文句點 (.!?)
-            sub_sentences = re.split(r'(?<=[.!?。！？])\s+', sentence)
-            refined_sentences.extend([s.strip() for s in sub_sentences if s.strip()])
-        logger.info(f"Extracted {len(refined_sentences)} complete sentences")
+        for s in sentences:
+            # 檢查句子是否以有效標點結尾，若無則嘗試修復
+            if s and not re.search(r'[。！？\n]$', s):
+                s += '。'  # 為無標點句子添加句號
+            refined_sentences.append(s)
+        
+        logger.debug("Preprocessed sentences: %d sentences", len(refined_sentences))
         return refined_sentences
 
     def on_translation_finished(self, translated_text):
@@ -568,14 +643,14 @@ class MainApplication(QtWidgets.QMainWindow, Ui_MainWindow):
         layout.addRow(cpu_threads_label, cpu_threads_spin)
 
         # 高性能推理 / Enable HPI
-        enable_hpi_check = QtWidgets.QCheckBox("啟用高性能推理 / Enable HPI")
-        enable_hpi_check.setChecked(self.ocr_processor.config.enable_hpi)
-        layout.addRow(enable_hpi_check)
+        # enable_hpi_check = QtWidgets.QCheckBox("啟用高性能推理 / Enable HPI")
+        # enable_hpi_check.setChecked(self.ocr_processor.config.enable_hpi)
+        # layout.addRow(enable_hpi_check)
 
         # MKLDNN
-        enable_mkldnn_check = QtWidgets.QCheckBox("啟用 MKLDNN / Enable MKLDNN")
-        enable_mkldnn_check.setChecked(self.ocr_processor.config.enable_mkldnn)
-        layout.addRow(enable_mkldnn_check)
+        # enable_mkldnn_check = QtWidgets.QCheckBox("啟用 MKLDNN / Enable MKLDNN")
+        # enable_mkldnn_check.setChecked(self.ocr_processor.config.enable_mkldnn)
+        # layout.addRow(enable_mkldnn_check)
 
         # 文本圖像校正 / Use Doc Unwarping
         use_doc_unwarping_check = QtWidgets.QCheckBox("文本圖像校正 / Use Doc Unwarping")
@@ -637,8 +712,8 @@ class MainApplication(QtWidgets.QMainWindow, Ui_MainWindow):
             #device_combo.currentText(),
             'cpu', # 強制使用 CPU
             cpu_threads_spin.value(),
-            enable_hpi_check.isChecked(),
-            enable_mkldnn_check.isChecked(),
+            # enable_hpi_check.isChecked(),
+            # enable_mkldnn_check.isChecked(),
             use_doc_unwarping_check.isChecked(),
             use_textline_orientation_check.isChecked(),
             use_doc_orientation_classify_check.isChecked(),
@@ -655,8 +730,8 @@ class MainApplication(QtWidgets.QMainWindow, Ui_MainWindow):
         dialog.setLayout(layout)
         dialog.exec()
 
-    def update_ocr_config(self, lang, device, cpu_threads, enable_hpi, enable_mkldnn, use_doc_unwarping,
-                         use_textline_orientation, use_doc_orientation_classify, text_det_limit_side_len,
+    def update_ocr_config(self, lang, device, cpu_threads, #enable_hpi, enable_mkldnn, 
+                          use_doc_unwarping,use_textline_orientation, use_doc_orientation_classify, text_det_limit_side_len,
                          text_det_limit_type, text_det_box_thresh, text_det_thresh, text_det_unclip_ratio, dialog):
         """更新 OCR 配置 / Update OCR configuration"""
         logger.info(f"Updating OCR config: lang={lang}, device={device}, cpu_threads={cpu_threads}")
@@ -665,8 +740,8 @@ class MainApplication(QtWidgets.QMainWindow, Ui_MainWindow):
                 lang=lang,
                 device=device,
                 cpu_threads=cpu_threads,
-                enable_hpi=enable_hpi,
-                enable_mkldnn=enable_mkldnn,
+                # enable_hpi=enable_hpi,
+                # enable_mkldnn=enable_mkldnn,
                 use_doc_unwarping=use_doc_unwarping,
                 use_textline_orientation=use_textline_orientation,
                 use_doc_orientation_classify=use_doc_orientation_classify,
@@ -881,7 +956,8 @@ class MainApplication(QtWidgets.QMainWindow, Ui_MainWindow):
         """回呼 OCR 歷史文本 / Recall OCR history text"""
         logger.debug(f"Recalling OCR history item {index}")
         if 0 <= index < len(self.ocr_history):
-            self.OCR_Detect_Text.setPlainText(self.ocr_history[index]["text"])
+            formatted_text = self.format_ocr_text(self.ocr_history[index]["text"])
+            self.OCR_Detect_Text.setPlainText(formatted_text)
             self.statusbar.showMessage("已載入 OCR 歷史記錄 / OCR history loaded", 3000)
             logger.info(f"Recalled OCR history item {index}")
 
@@ -909,7 +985,8 @@ class MainApplication(QtWidgets.QMainWindow, Ui_MainWindow):
         """回呼翻譯歷史文本 / Recall translation history text"""
         logger.debug(f"Recalling translate history item {index}")
         if 0 <= index < len(self.translate_history):
-            self.Translated_Text.setPlainText(self.translate_history[index]["text"])
+            formatted_text = self.format_ocr_text(self.translate_history[index]["text"])  # 使用相同的格式化函數
+            self.Translated_Text.setPlainText(formatted_text)
             self.statusbar.showMessage("已載入翻譯歷史記錄 / Translation history loaded", 3000)
             logger.info(f"Recalled translate history item {index}")
 
