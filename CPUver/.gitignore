@@ -6,7 +6,6 @@ Debug
 test.py
 MainGUI_ui.py
 MainGUI.ui
-reference.txt
 .DS_Store
 evaluation_extension.py
 translater_*
