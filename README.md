@@ -25,7 +25,7 @@ Python 3.12+
 ### Step
 1. Clone the repository : <br/>
    ```
-   https://github.com/NitanCos/local_translator
+   https://github.com/NitanCos/local_translator.git
    ```
 3. Navigate to the project directory :<br/>
    ```
