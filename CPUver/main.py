@@ -796,7 +796,8 @@ class MainApplication(QtWidgets.QMainWindow, Ui_MainWindow):
         # 最大生成 token 數
         max_new_tokens_label = QtWidgets.QLabel("最大生成 Token 數 / Max New Tokens:")
         max_new_tokens_spin = QtWidgets.QSpinBox()
-        max_new_tokens_spin.setRange(1, 2048)
+        max_new_tokens_spin.setRange(1, 99999)
+        max_new_tokens_spin.setSingleStep(100)
         max_new_tokens_spin.setValue(self.translate_config.max_new_tokens)
         layout.addRow(max_new_tokens_label, max_new_tokens_spin)
 

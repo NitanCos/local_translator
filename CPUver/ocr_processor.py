@@ -15,10 +15,10 @@ import re
 
 
 # 日誌設定
-LOG_FORMAT = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
-os.makedirs("Debug", exist_ok=True)  # 創建 Debug 目錄
-logging.basicConfig(level=logging.DEBUG, format=LOG_FORMAT, filename="Debug/OCR.log", encoding="utf-8")
-logger = logging.getLogger(__name__)
+# LOG_FORMAT = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+# os.makedirs("Debug", exist_ok=True)  # 創建 Debug 目錄
+# logging.basicConfig(level=logging.DEBUG, format=LOG_FORMAT, filename="Debug/OCR.log", encoding="utf-8")
+# logger = logging.getLogger(__name__)
 
 @dataclass
 class OCR_Processor_Config:
@@ -68,9 +68,9 @@ class OCR_Processor:
                 text_det_thresh=config.text_det_thresh,
                 text_det_unclip_ratio=config.text_det_unclip_ratio,
             )
-            logger.info(f"PaddleOCR initialized successfully.，語言: {config.lang}")
+            # logger.info(f"PaddleOCR initialized successfully.，語言: {config.lang}")
         except Exception as e:
-            logger.error(f"PaddleOCR 初始化失敗: {e}")
+            # logger.error(f"PaddleOCR 初始化失敗: {e}")
             raise e
 
     def is_url(self, s: str) -> bool:
@@ -82,12 +82,12 @@ class OCR_Processor:
         return bool(url_pattern.match(s.strip()))
 
     def _load_url_image(self, url: str) -> np.ndarray:
-        logger.info(f"Downloading image from URL: {url}")
+        # logger.info(f"Downloading image from URL: {url}")
         resp = requests.get(url, stream=True, timeout=10)
         resp.raise_for_status()
         img = Image.open(BytesIO(resp.content)).convert("RGB")
         image_array = np.array(img)
-        logger.info(f"Downloaded image size: {image_array.shape}")
+        # logger.info(f"Downloaded image size: {image_array.shape}")
         return image_array
     
     def _expand_input(self, input) : #將 inputs 扁平化並展開目錄、網址，回傳 list[Union[str, np.ndarray]]
@@ -98,26 +98,26 @@ class OCR_Processor:
         output = []
         for item in input:
             if isinstance(item, np.ndarray):
-                logger.debug("Array image, shape: %s", item.shape)
+                # logger.debug("Array image, shape: %s", item.shape)
                 output.append(item)
             elif isinstance(item, str):
                 if self.is_url(item):
-                    logger.debug("URL, load image: %s", item)
+                    # logger.debug("URL, load image: %s", item)
                     output.append(item)
                 elif os.path.isdir(item):
                     # 只展開常見圖檔 
                     for ext in ('*.jpg','*.jpeg','*.png','*.bmp'):
                         files = glob.glob(os.path.join(item, ext))
-                        logger.debug("Found %d %s files", len(files), ext)
+                        # logger.debug("Found %d %s files", len(files), ext)
                         output.extend(files)
                 else:
                     # 單一檔案（Image / PDF）
-                    logger.debug("Single file, adding to output: %s", item)
+                    # logger.debug("Single file, adding to output: %s", item)
                     output.append(item)
             else:
-                logger.error("Unsupported input type: %s", type(item))
+                # logger.error("Unsupported input type: %s", type(item))
                 raise TypeError(f"Unsupported input type: {type(item)}")
-        logger.debug("Expanded list contains %d items", len(output))
+        # logger.debug("Expanded list contains %d items", len(output))
         return output
     
     def ocr_predict(self, predict_input):
@@ -143,10 +143,10 @@ class OCR_Processor:
                     else:
                         predict_res = self.ocr.predict(item)
                 else:
-                    logger.error(f"Unsupported input type: {type(item)}")
+                    # logger.error(f"Unsupported input type: {type(item)}")
                     continue
             except Exception as e:
-                logger.error(f"Prediction failed: {e}")
+                # logger.error(f"Prediction failed: {e}")
                 continue
             #logger.info(f"Prediction result: {predict_res}")
         return predict_res

@@ -18,8 +18,8 @@ class NLLBConfig:
     模型與認證相關設定
     """
     model_name: str = "facebook/nllb-200-distilled-1.3B"
-    src_language: str = None  # 預設 None，允許自動檢測
-    tgt_language: str = "zho_Hant"  # 預設繁體中文
+    src_language: str = None  
+    tgt_language: str = "eng_Latn"  
     torch_dtype: torch.dtype = torch.float32
     low_cpu_mem_usage: bool = True
     auth_token: str = None
@@ -35,7 +35,7 @@ class TranslateConfig:
     """
     生成參數設定 (基於模型調整默認值)
     """
-    max_new_tokens: int = 100
+    max_new_tokens: int = 1024
     min_length: int = 0
     num_beams: int = field(default_factory=lambda: 15)  
     early_stopping: bool = False
@@ -43,9 +43,9 @@ class TranslateConfig:
     no_repeat_ngram_size: int = 0
     repetition_penalty: float = 1.2
     do_sample: bool = True
-    temperature: float = 1.0
-    top_k: int = 50
-    top_p: float = 1.0
+    temperature: float = 1.5
+    top_k: int = 100
+    top_p: float = 0.9
     forced_bos_token_id: int = field(init=False, default=None)
 
     def adjust_for_model(self, model_name: str):
