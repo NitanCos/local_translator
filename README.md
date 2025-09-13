@@ -33,19 +33,19 @@ Python 3.12+
 1. Clone the repository:
 
    ```bash
-      https://github.com/NitanCos/local_translator.git
+   https://github.com/NitanCos/local_translator.git
    ```
 
 2. Navigate to the project directory:
 
    ```bash
-      cd local_translator/CPUver
+   cd local_translator/CPUver
    ```
 
 3. Install dependencies:
 
    ```bash
-      pip install -r requirements.txt
+   pip install -r requirements.txt
    ```
 
 4. For NLLB models: Automatically Download from Hugging Face in first execution.
