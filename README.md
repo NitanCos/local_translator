@@ -24,13 +24,24 @@ Key technologies: Python, PyQt6, PaddleOCR, Transformers (for NLLB), Requests (f
 Python 3.12+
 ### Step
 1. Clone the repository : <br/>
-   ```https://github.com/NitanCos/local_translator```
-2. Navigate to the project directory :<br/>
-   ``` cd local_translator/CPUver```
-3. Install dependencies :<br/>
-   ``` pip install -r requirements.txt```
-4. For NLLB models: Automatically Download from Hugging Face in first execution.
-5. For APIs: Obtain keys for Gemini or DeepL and configure in settings menu.
+   ```
+   https://github.com/NitanCos/local_translator
+   ```
+3. Navigate to the project directory :<br/>
+   ```
+   cd local_translator/CPUver
+   ```
+5. Install dependencies :<br/>
+   ```
+   pip install -r requirements.txt
+   ```
+7. For NLLB models: Automatically Download from Hugging Face in first execution.
+8. For APIs: Obtain keys for Gemini or DeepL and configure in settings menu.
+
+### Run
+```
+python main.py
+```
 
 ## Acknowledgments
  - PaddleOCR for OCR engine.
