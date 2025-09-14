@@ -1,4 +1,4 @@
-from paddleocr import PaddleOCR
+from paddleocr import PaddleOCR , DocVLM
 import logging
 import numpy as np
 import os
@@ -22,55 +22,85 @@ import re
 
 @dataclass
 class OCR_Processor_Config:
+
+    ocr_version: str = 'PP-OCRv5' #OCR 版本
+
+    use_doc_unwarping: bool = True  
+    doc_unwarping_model_name: str = "UVDoc"  
+    doc_unwarping_model_dir: str = r"D:\models\paddleocr\UVDoc_infer"
+
+    use_textline_orientation: bool = True  
+    textline_orientation_model_name	: str = "PP-LCNet_x1_0_textline_ori"  
+    textline_orientation_model_dir: str = r"D:\models\paddleocr\PP-LCNet_x1_0_textline_ori_infer"
+    textline_orientation_batch_size: int = 1  
+
+    use_doc_orientation_classify: bool = True 
+    doc_orientation_classify_model_dir: str = r"D:\models\paddleocr\PP-LCNet_x1_0_doc_ori_infer"
+    doc_orientation_classify_model_name: str = "PP-LCNet_x1_0_doc_ori"
+
+    text_detection_model_dir: str = r"D:\models\paddleocr\PP-OCRv5_mobile_det_infer"
+    text_detection_model_name: str = "PP-OCRv5_mobile_det"
+
+    text_recognition_model_dir: str = r"D:\models\paddleocr\PP-OCRv5_mobile_rec_infer"
+    text_recognition_model_name: str = "PP-OCRv5_mobile_rec"
+
     lang: str = 'en' #語言
     device: str = 'cpu' #設備
     cpu_threads: int = 12 #CPU 線程數
-    enable_hpi: bool = False #是否啟用高性能推理
-    enable_mkldnn: bool = False #是否啟用 MKLDNN
-    use_doc_unwarping: bool = True  #文本圖像校正
-    use_textline_orientation: bool = False  #文本行方向判斷
-    use_doc_orientation_classify: bool = False  #文檔方向判斷
-    text_det_limit_side_len: int = 16  #文本檢測限制邊長
-    text_det_limit_type: str = "min"  #文本檢測限制類型
-    text_det_box_thresh: float = 0.3  #文本檢測框閾值
-    text_det_thresh: float = 0.3  #文本檢測像素閾值
-    text_det_unclip_ratio: float = 1.6  #文本檢測擴張係數
+    enable_hpi: bool = False #是否啟用高性能推理 (only on Linux)
+    enable_mkldnn: bool = False #是否啟用 MKLDNN (only intel cpu)
+    text_det_limit_side_len: int = 16  
+    text_det_limit_type: str = "min"  
+    text_det_box_thresh: float = 0.3  
+    text_det_thresh: float = 0.3  
+    text_det_unclip_ratio: float = 1.6  
+      
+     
+
+     
+    
+     
 
 
 
 class OCR_Processor:
     def __init__(self, config: OCR_Processor_Config):
         self.config = config
-        #logger.info("Initializing OCR_Processor with config: %s", config)
-        #logger.info(f"語言: {config.lang}")
-        #logger.info(f"使用文本圖像校正: {config.use_doc_unwarping}")
-        #logger.info(f"使用文本行方向判斷: {config.use_textline_orientation}")
-        #logger.info(f"使用文檔方向判斷: {config.use_doc_orientation_classify}")
-        #logger.info(f"文本檢測限制邊長: {config.text_det_limit_side_len}")
-        #logger.info(f"文本檢測限制類型: {config.text_det_limit_type}")
-        #logger.info(f"文本檢測框閾值: {config.text_det_box_thresh}")
-        #logger.info(f"文本檢測像素閾值: {config.text_det_thresh}")
-        #logger.info(f"文本檢測擴張係數: {config.text_det_unclip_ratio}")
         try:
             self.ocr = PaddleOCR( 
+
+                ocr_version=config.ocr_version,
+                use_doc_unwarping=config.use_doc_unwarping,
+                doc_unwarping_model_name=config.doc_unwarping_model_name,
+                doc_unwarping_model_dir=config.doc_unwarping_model_dir,
+
+                use_textline_orientation=config.use_textline_orientation,  
+                textline_orientation_model_name=config.textline_orientation_model_name,
+                textline_orientation_model_dir=config.textline_orientation_model_dir,
+                textline_orientation_batch_size=config.textline_orientation_batch_size,
+
+                use_doc_orientation_classify=config.use_doc_orientation_classify,
+                doc_orientation_classify_model_dir = config.doc_orientation_classify_model_dir,
+                doc_orientation_classify_model_name = config.doc_orientation_classify_model_name,
+                
+                text_detection_model_dir=config.text_detection_model_dir,
+                text_detection_model_name=config.text_detection_model_name,
+
+                text_recognition_model_dir=config.text_recognition_model_dir,
+                text_recognition_model_name=config.text_recognition_model_name,
+
+                lang=config.lang,
                 device=config.device,
                 cpu_threads=config.cpu_threads,
-                enable_hpi=config.enable_hpi,
-                enable_mkldnn=config.enable_mkldnn,
-                lang=config.lang,
-                ocr_version='PP-OCRv5',
-                use_doc_unwarping=config.use_doc_unwarping,
-                use_textline_orientation=config.use_textline_orientation,
-                use_doc_orientation_classify=config.use_doc_orientation_classify,
+                enable_hpi=config.enable_hpi, #是否啟用高性能推理 (only on Linux)
+                enable_mkldnn=config.enable_mkldnn, #是否啟用 MKLDNN (only intel cpu)
                 text_det_limit_side_len=config.text_det_limit_side_len,
                 text_det_limit_type=config.text_det_limit_type,
-                text_det_box_thresh=config.text_det_box_thresh,
-                text_det_thresh=config.text_det_thresh,
-                text_det_unclip_ratio=config.text_det_unclip_ratio,
+                text_det_box_thresh= config.text_det_box_thresh,
+                text_det_thresh= config.text_det_thresh, 
+                text_det_unclip_ratio= config.text_det_unclip_ratio
             )
-            # logger.info(f"PaddleOCR initialized successfully.，語言: {config.lang}")
         except Exception as e:
-            # logger.error(f"PaddleOCR 初始化失敗: {e}")
             raise e
 
     def is_url(self, s: str) -> bool:
@@ -82,42 +112,33 @@ class OCR_Processor:
         return bool(url_pattern.match(s.strip()))
 
     def _load_url_image(self, url: str) -> np.ndarray:
-        # logger.info(f"Downloading image from URL: {url}")
+
         resp = requests.get(url, stream=True, timeout=10)
         resp.raise_for_status()
         img = Image.open(BytesIO(resp.content)).convert("RGB")
         image_array = np.array(img)
-        # logger.info(f"Downloaded image size: {image_array.shape}")
+
         return image_array
     
     def _expand_input(self, input) : #將 inputs 扁平化並展開目錄、網址，回傳 list[Union[str, np.ndarray]]
-        #logger.info(f"Expanding input: {input}")
         if not isinstance(input, list): 
-            #logger.info(f"Input is not a list, converting to list: {input}")
             input = [input]
         output = []
         for item in input:
             if isinstance(item, np.ndarray):
-                # logger.debug("Array image, shape: %s", item.shape)
                 output.append(item)
             elif isinstance(item, str):
                 if self.is_url(item):
-                    # logger.debug("URL, load image: %s", item)
                     output.append(item)
                 elif os.path.isdir(item):
-                    # 只展開常見圖檔 
                     for ext in ('*.jpg','*.jpeg','*.png','*.bmp'):
                         files = glob.glob(os.path.join(item, ext))
-                        # logger.debug("Found %d %s files", len(files), ext)
                         output.extend(files)
                 else:
                     # 單一檔案（Image / PDF）
-                    # logger.debug("Single file, adding to output: %s", item)
                     output.append(item)
             else:
-                # logger.error("Unsupported input type: %s", type(item))
                 raise TypeError(f"Unsupported input type: {type(item)}")
-        # logger.debug("Expanded list contains %d items", len(output))
         return output
     
     def ocr_predict(self, predict_input):
@@ -129,7 +150,6 @@ class OCR_Processor:
         # Predict return value: list of OCR 結果（依輸入順序扁平化）
         
         expanded_inputs = self._expand_input(predict_input)
-        #logger.info(f"Expanded inputs: {expanded_inputs}")
         predict_res = []
 
         for item in expanded_inputs:
@@ -143,12 +163,9 @@ class OCR_Processor:
                     else:
                         predict_res = self.ocr.predict(item)
                 else:
-                    # logger.error(f"Unsupported input type: {type(item)}")
                     continue
             except Exception as e:
-                # logger.error(f"Prediction failed: {e}")
                 continue
-            #logger.info(f"Prediction result: {predict_res}")
         return predict_res
     
     def ocr_print(self, predict_res, format_json = bool, indent = int, ensure_ascii = bool):
