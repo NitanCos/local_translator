@@ -1,0 +1,2 @@
+*.pdiparams filter=lfs diff=lfs merge=lfs -text
+* text=auto

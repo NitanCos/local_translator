@@ -1,11 +1,9 @@
-from paddleocr import PaddleOCR , DocVLM
+from paddleocr import PaddleOCR
 import logging
 import numpy as np
 import os
-import mss
 from dataclasses import dataclass
-from PIL import Image, ImageDraw, ImageFont
-from pandas.core.internals.blocks import libinternals
+from PIL import Image
 import requests
 from io import BytesIO
 import glob
@@ -49,19 +47,11 @@ class OCR_Processor_Config:
     cpu_threads: int = 12 #CPU 線程數
     enable_hpi: bool = False #是否啟用高性能推理 (only on Linux)
     enable_mkldnn: bool = False #是否啟用 MKLDNN (only intel cpu)
-    text_det_limit_side_len: int = 16  
+    text_det_limit_side_len: int = 64 
     text_det_limit_type: str = "min"  
     text_det_box_thresh: float = 0.3  
     text_det_thresh: float = 0.3  
     text_det_unclip_ratio: float = 1.6  
-      
-     
-
-     
-    
-     
-
-
 
 class OCR_Processor:
     def __init__(self, config: OCR_Processor_Config):

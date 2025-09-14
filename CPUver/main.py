@@ -1,377 +1,39 @@
-import sys
+﻿import sys
 import os
 import logging
 import re
 from logging.handlers import RotatingFileHandler
 from PyQt6 import QtWidgets, QtCore, QtGui
 from PyQt6.QtWidgets import QFileDialog
-# from PyQt6.QtCore import QThread, pyqtSignal, QRunnable, QObject, QThreadPool  # 兼容既有匯入，未使用
 from MainGUI import Ui_MainWindow
 from ocr_processor import OCR_Processor, OCR_Processor_Config
 from API_mode import APIMode
 from region_capture import RegionSelector
-from NLLB_translator import NLLBTranslator, NLLBConfig, TranslateConfig
 from datetime import datetime
 import json
 import numpy as np
 from pathlib import Path
-import multiprocessing as mp
 import time
-from multiprocessing import Process, Queue
+from workers import TranslationWorker, OCRWorker
+import ocr_paths as ocr_paths_mod
+from history_views import HistoryManager
+import log_viewer as log_viewer_mod
+from NLLB_translator import NLLBTranslator, NLLBConfig, TranslateConfig
+from logging_utils import setup_logging
+from PIL import Image
+import tempfile
 
 # =========================
-# 日誌設定 / Logging configuration
+# 日誌系統初始化
 # =========================
-def setup_logging():
-    LOG_FORMAT = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
-    os.makedirs("Debug", exist_ok=True)
-
-    formatter = logging.Formatter(LOG_FORMAT)
-    console_handler = logging.StreamHandler(sys.stdout)
-    console_handler.setFormatter(formatter)
-    console_handler.setLevel(logging.DEBUG)
-
-    # 統一的 All.log
-    all_handler = RotatingFileHandler("Debug/All.log", maxBytes=10*1024*1024, backupCount=5, encoding="utf-8")
-    all_handler.setFormatter(formatter)
-    all_handler.setLevel(logging.DEBUG)
-
-    main_logger = logging.getLogger("main")
-    main_logger.addHandler(all_handler)
-    main_logger.addHandler(console_handler)
-    main_logger.setLevel(logging.INFO)
-    main_logger.propagate = False
-
-    ocr_logger = logging.getLogger("ocr_processor")
-    ocr_logger.addHandler(all_handler)
-    ocr_logger.addHandler(console_handler)
-    ocr_logger.setLevel(logging.DEBUG)
-    ocr_logger.propagate = False
-
-    translator_logger = logging.getLogger("translater")
-    translator_logger.addHandler(all_handler)
-    translator_logger.addHandler(console_handler)
-    translator_logger.setLevel(logging.DEBUG)
-    translator_logger.propagate = False
-
-    api_logger = logging.getLogger("API_mode")
-    api_logger.addHandler(all_handler)
-    api_logger.addHandler(console_handler)
-    api_logger.setLevel(logging.DEBUG)
-
-    region_logger = logging.getLogger("region_capture")
-    region_logger.addHandler(all_handler)
-    region_logger.addHandler(console_handler)
-    region_logger.setLevel(logging.DEBUG)
-
 setup_logging()
 logger = logging.getLogger("main")
 logger.info("Logging system initialized")
 
-# ========= OCR 設定輔助：根據基底資料夾自動推導各模型目錄 =========
-
-def _basename_or_default(path_str: str, default_name: str) -> str:
-    """回傳現有 *_model_dir 的 basename；若空則回 default_name。"""
-    try:
-        b = os.path.basename(path_str.replace("\\", "/").rstrip("/"))
-        return b if b else default_name
-    except Exception:
-        return default_name
-
-def build_ocr_dirs_from_base(base_dir: str, cfg) -> dict:
-    """
-    依 cfg 目前設定（*_model_dir 與 *_model_name）+ base_dir 自動組各模型目錄。
-    規則：若 *_model_dir 為空，使用 *_model_name + '_infer'；否則沿用其 basename 並拼到 base_dir 下。
-    """
-    def infer_subdir(current_dir: str, default_from_name: str) -> str:
-        base = _basename_or_default(current_dir, f"{default_from_name}_infer")
-        return os.path.join(base_dir, base)
-
-    return {
-        "doc_unwarping_model_dir":            infer_subdir(cfg.doc_unwarping_model_dir,            cfg.doc_unwarping_model_name),
-        "textline_orientation_model_dir":     infer_subdir(cfg.textline_orientation_model_dir,     cfg.textline_orientation_model_name),
-        "doc_orientation_classify_model_dir": infer_subdir(cfg.doc_orientation_classify_model_dir, cfg.doc_orientation_classify_model_name),
-        "text_detection_model_dir":           infer_subdir(cfg.text_detection_model_dir,           cfg.text_detection_model_name),
-        "text_recognition_model_dir":         infer_subdir(cfg.text_recognition_model_dir,         cfg.text_recognition_model_name),
-    }
-
-def guess_ocr_base_dir_from_cfg(cfg) -> str | None:
-    """從現有 *_model_dir 反推出共同 base_dir；找得到就回傳該父層資料夾。"""
-    candidates = [
-        cfg.doc_unwarping_model_dir,
-        cfg.textline_orientation_model_dir,
-        cfg.doc_orientation_classify_model_dir,
-        cfg.text_detection_model_dir,
-        cfg.text_recognition_model_dir,
-    ]
-    for p in candidates:
-        if p and isinstance(p, str) and os.path.isdir(p):
-            return os.path.dirname(p)
-    for p in candidates:
-        if p and isinstance(p, str):
-            return os.path.dirname(p)
-    return None
-
-
-# =========================
-# Multiprocessing Workers
-# =========================
-
-# ------- 子行程目標：翻譯 -------
-
-def _run_translation(queue, text: str, is_api_mode: bool,
-                     api_snapshot: dict | None,
-                     nllb_cfg_dict: dict | None,
-                     translate_cfg_dict: dict | None):
-    try:
-        if is_api_mode:
-            # ...（API path 保持不變）
-            from API_mode import APIMode
-            api = APIMode()
-            api.config.api_type   = api_snapshot["api_type"]
-            api.config.api_key    = api_snapshot["api_key"]
-            api.config.model      = api_snapshot["model"]
-            api.config.target_lang= api_snapshot["target_lang"]
-            paras = text.split("\n\n")
-            out = [api.translate_text(p) for p in paras]
-            queue.put(("result", "\n\n".join(out)))
-        else:
-            # 本地 NLLB：在子行程才建模（主行程不建）
-            from NLLB_translator import NLLBTranslator, NLLBConfig, TranslateConfig
-            cfg = NLLBConfig(
-                model_name=nllb_cfg_dict["model_name"],
-                src_language=nllb_cfg_dict.get("src_language"),
-                tgt_language=nllb_cfg_dict["tgt_language"],
-                local_dir=nllb_cfg_dict["local_dir"],          # ★ 必填：由 GUI 選擇
-                prefer_safetensors=nllb_cfg_dict.get("prefer_safetensors", False),
-                low_cpu_mem_usage=True,
-                torch_dtype=nllb_cfg_dict.get("torch_dtype", "float32"),
-                revision="main",
-            )
-            gcfg = TranslateConfig(
-                max_new_tokens=translate_cfg_dict["max_new_tokens"],
-                min_length=translate_cfg_dict["min_length"],
-                num_beams=translate_cfg_dict["num_beams"],
-                early_stopping=translate_cfg_dict["early_stopping"],
-                length_penalty=translate_cfg_dict["length_penalty"],
-                no_repeat_ngram_size=translate_cfg_dict["no_repeat_ngram_size"],
-                repetition_penalty=translate_cfg_dict["repetition_penalty"],
-                do_sample=translate_cfg_dict["do_sample"],
-                temperature=translate_cfg_dict["temperature"],
-                top_k=translate_cfg_dict["top_k"],
-                top_p=translate_cfg_dict["top_p"],
-            )
-            translator = NLLBTranslator(cfg)  # ★ 這裡才真正載入（本地、離線、無下載）
-            # 你原來的段落切分函式可替代；此處簡化
-            paragraphs = [p for p in text.split("\n\n") if p.strip()]
-            out = [translator.translate(p, gcfg) for p in paragraphs]
-            queue.put(("result", "\n\n".join(out)))
-    except Exception as e:
-        queue.put(("error", str(e)))
-
-# ------- 子行程目標：OCR --------
-
-def _run_ocr(queue, img_array, is_api_mode: bool, api_snapshot: dict | None, ocr_cfg_dict: dict | None):
-    try:
-        if is_api_mode:
-            api = APIMode()
-            api.config.api_type    = api_snapshot["api_type"]
-            api.config.api_key     = api_snapshot["api_key"]
-            api.config.model       = api_snapshot["model"]
-            api.config.target_lang = api_snapshot["target_lang"]
-            text = api.ocr_image(img_array)
-            queue.put(("result", text))
-        else:
-            # ★ 完整重建 OCR_Processor_Config（符合你新版 ocr_processor 的欄位）
-            cfg = OCR_Processor_Config(
-                ocr_version=ocr_cfg_dict["ocr_version"],
-
-                use_doc_unwarping=ocr_cfg_dict["use_doc_unwarping"],
-                doc_unwarping_model_name=ocr_cfg_dict["doc_unwarping_model_name"],
-                doc_unwarping_model_dir=ocr_cfg_dict["doc_unwarping_model_dir"],
-
-                use_textline_orientation=ocr_cfg_dict["use_textline_orientation"],
-                textline_orientation_model_name=ocr_cfg_dict["textline_orientation_model_name"],
-                textline_orientation_model_dir=ocr_cfg_dict["textline_orientation_model_dir"],
-                textline_orientation_batch_size=ocr_cfg_dict["textline_orientation_batch_size"],
-
-                use_doc_orientation_classify=ocr_cfg_dict["use_doc_orientation_classify"],
-                doc_orientation_classify_model_dir=ocr_cfg_dict["doc_orientation_classify_model_dir"],
-                doc_orientation_classify_model_name=ocr_cfg_dict["doc_orientation_classify_model_name"],
-
-                text_detection_model_dir=ocr_cfg_dict["text_detection_model_dir"],
-                text_detection_model_name=ocr_cfg_dict["text_detection_model_name"],
-
-                text_recognition_model_dir=ocr_cfg_dict["text_recognition_model_dir"],
-                text_recognition_model_name=ocr_cfg_dict["text_recognition_model_name"],
-
-                lang=ocr_cfg_dict["lang"],
-                device=ocr_cfg_dict["device"],
-                cpu_threads=ocr_cfg_dict["cpu_threads"],
-                enable_hpi=ocr_cfg_dict["enable_hpi"],
-                enable_mkldnn=ocr_cfg_dict["enable_mkldnn"],
-                text_det_limit_side_len=ocr_cfg_dict["text_det_limit_side_len"],
-                text_det_limit_type=ocr_cfg_dict["text_det_limit_type"],
-                text_det_box_thresh=ocr_cfg_dict["text_det_box_thresh"],
-                text_det_thresh=ocr_cfg_dict["text_det_thresh"],
-                text_det_unclip_ratio=ocr_cfg_dict["text_det_unclip_ratio"],
-            )
-            ocr = OCR_Processor(cfg)
-            predict_res = ocr.ocr_predict(img_array)
-            all_text_list = ocr.json_preview_and_get_all_text(predict_res)
-            queue.put(("result", "\n".join(all_text_list)))
-    except Exception as e:
-        queue.put(("error", str(e)))
-
-# =========================
-
-class TranslationWorker:
-    def __init__(self, text, api_mode, is_api_mode, translate_config, nllb_cfg):
-
-        self.text = text
-        self.is_api_mode = is_api_mode
-        self.api_snapshot = {
-            "api_type": api_mode.config.api_type,
-            "api_key":  api_mode.config.api_key,
-            "model":    api_mode.config.model,
-            "target_lang": api_mode.config.target_lang,
-        }
-        self.nllb_cfg_dict = {
-            "model_name": nllb_cfg.model_name,
-            "src_language": nllb_cfg.src_language,
-            "tgt_language": nllb_cfg.tgt_language,
-            "local_dir": nllb_cfg.local_dir,
-            "prefer_safetensors": nllb_cfg.prefer_safetensors,
-            "torch_dtype": getattr(nllb_cfg.torch_dtype, "name", nllb_cfg.torch_dtype),
-        }
-        self.translate_cfg_dict = {
-            "max_new_tokens": translate_config.max_new_tokens,
-            "min_length": translate_config.min_length,
-            "num_beams": translate_config.num_beams,
-            "early_stopping": translate_config.early_stopping,
-            "length_penalty": translate_config.length_penalty,
-            "no_repeat_ngram_size": translate_config.no_repeat_ngram_size,
-            "repetition_penalty": translate_config.repetition_penalty,
-            "do_sample": translate_config.do_sample,
-            "temperature": translate_config.temperature,
-            "top_k": translate_config.top_k,
-            "top_p": translate_config.top_p,
-        }
-
-        self.queue = Queue()
-        self.process = None
-        self.timer = None
-
-    def start(self, callback_result, callback_error):
-        self.process = Process(
-            target=_run_translation,
-            args=(self.queue, self.text, self.is_api_mode,
-                  self.api_snapshot, self.nllb_cfg_dict, self.translate_cfg_dict)
-        )
-        self.process.start()
-        self.timer = QtCore.QTimer()
-        self.timer.timeout.connect(lambda: self._check_queue(callback_result, callback_error))
-        self.timer.start(200)
-
-    def _check_queue(self, callback_result, callback_error):
-        try:
-            msg_type, data = self.queue.get_nowait()
-        except Exception:
-            return
-        self.timer.stop()
-        if msg_type == "result":
-            callback_result(data)
-        else:
-            callback_error(data)
-
-    def cancel(self):
-        if self.process and self.process.is_alive():
-            self.process.terminate()
-            self.process.join()
-
-
-
-class OCRWorker:
-    def __init__(self, img_array, api_mode, is_api_mode, ocr_processor):
-        self.img_array = img_array
-        self.is_api_mode = is_api_mode
-
-        self.api_snapshot = {
-            "api_type": api_mode.config.api_type,
-            "api_key":  api_mode.config.api_key,
-            "model":    api_mode.config.model,
-            "target_lang": api_mode.config.target_lang,
-        }
-
-        cfg = ocr_processor.config
-        self.ocr_cfg_dict = {
-            "ocr_version": cfg.ocr_version,
-
-            "use_doc_unwarping": cfg.use_doc_unwarping,
-            "doc_unwarping_model_name": cfg.doc_unwarping_model_name,
-            "doc_unwarping_model_dir": cfg.doc_unwarping_model_dir,
-
-            "use_textline_orientation": cfg.use_textline_orientation,
-            "textline_orientation_model_name": cfg.textline_orientation_model_name,
-            "textline_orientation_model_dir": cfg.textline_orientation_model_dir,
-            "textline_orientation_batch_size": cfg.textline_orientation_batch_size,
-
-            "use_doc_orientation_classify": cfg.use_doc_orientation_classify,
-            "doc_orientation_classify_model_dir": cfg.doc_orientation_classify_model_dir,
-            "doc_orientation_classify_model_name": cfg.doc_orientation_classify_model_name,
-
-            "text_detection_model_dir": cfg.text_detection_model_dir,
-            "text_detection_model_name": cfg.text_detection_model_name,
-
-            "text_recognition_model_dir": cfg.text_recognition_model_dir,
-            "text_recognition_model_name": cfg.text_recognition_model_name,
-
-            "lang": cfg.lang,
-            "device": cfg.device,
-            "cpu_threads": cfg.cpu_threads,
-            "enable_hpi": cfg.enable_hpi,
-            "enable_mkldnn": cfg.enable_mkldnn,
-            "text_det_limit_side_len": cfg.text_det_limit_side_len,
-            "text_det_limit_type": cfg.text_det_limit_type,
-            "text_det_box_thresh": cfg.text_det_box_thresh,
-            "text_det_thresh": cfg.text_det_thresh,
-            "text_det_unclip_ratio": cfg.text_det_unclip_ratio,
-        }
-
-        self.queue = Queue()
-        self.process = None
-        self.timer = None
-
-    def start(self, callback_result, callback_error):
-        self.process = Process(
-            target=_run_ocr,
-            args=(self.queue, self.img_array, self.is_api_mode,
-                  self.api_snapshot, self.ocr_cfg_dict)
-        )
-        self.process.start()
-        self.timer = QtCore.QTimer()
-        self.timer.timeout.connect(lambda: self._check_queue(callback_result, callback_error))
-        self.timer.start(200)
-
-    def _check_queue(self, callback_result, callback_error):
-        try:
-            msg_type, data = self.queue.get_nowait()
-        except Exception:
-            return
-        self.timer.stop()
-        if msg_type == "result":
-            callback_result(data)
-        else:
-            callback_error(data)
-
-    def cancel(self):
-        if self.process and self.process.is_alive():
-            self.process.terminate()
-            self.process.join()
-
 # =========================
 # MainApplication
 # =========================
+
 class MainApplication(QtWidgets.QMainWindow, Ui_MainWindow):
     def __init__(self):
         super().__init__()
@@ -379,13 +41,16 @@ class MainApplication(QtWidgets.QMainWindow, Ui_MainWindow):
         self.setupUi(self)
 
         # 狀態成員
+        self.max_history = 10
         self.ocr_processor = None
         self.translator = None
         self.api_mode = APIMode()
         self.is_api_mode = False  # 由 UI 切換
-        self.ocr_history = []
-        self.translate_history = []
-        self.max_history = 5
+        self.history_manager = HistoryManager(self.max_history)
+        self.history_manager.load()
+        self.ocr_history = self.history_manager.ocr_history
+        self.translate_history = self.history_manager.translate_history
+        #
 
         self.nllb_cfg = NLLBConfig(
         model_name="facebook/nllb-200-distilled-1.3B",
@@ -403,8 +68,6 @@ class MainApplication(QtWidgets.QMainWindow, Ui_MainWindow):
         self.init_components()
         # 建立 UI 連接
         self.setup_connections()
-        # 載入歷史
-        self.load_history()
         logger.info("MainApplication initialization completed")
 
         # 保存 worker 引用，避免 GC
@@ -442,34 +105,9 @@ class MainApplication(QtWidgets.QMainWindow, Ui_MainWindow):
         self.actionSelect_Mode.triggered.connect(self.show_select_mode)
         self.actionOCR_Setting.triggered.connect(self.show_ocr_setting)
         self.actionTranslator_Setting.triggered.connect(self.show_translator_setting)
-        self.actionShow_Detect_History.triggered.connect(self.show_ocr_history)
-        self.actionShow_Translator_History.triggered.connect(self.show_translate_history)
-        self.actionAll_Log.triggered.connect(lambda: self.show_log("Debug/All.log"))
-
-    # ---------- 歷史 ----------
-    def load_history(self):
-        logger.info("Loading history")
-        try:
-            if os.path.exists("ocr_history.json"):
-                with open("ocr_history.json", "r", encoding="utf-8") as f:
-                    self.ocr_history = json.load(f)[:self.max_history]
-            if os.path.exists("translate_history.json"):
-                with open("translate_history.json", "r", encoding="utf-8") as f:
-                    self.translate_history = json.load(f)[:self.max_history]
-            logger.info("History loaded successfully")
-        except Exception as e:
-            logger.error(f"Failed to load history: {e}")
-
-    def save_history(self):
-        logger.info("Saving history")
-        try:
-            with open("ocr_history.json", "w", encoding="utf-8") as f:
-                json.dump(self.ocr_history, f, ensure_ascii=False, indent=2)
-            with open("translate_history.json", "w", encoding="utf-8") as f:
-                json.dump(self.translate_history, f, ensure_ascii=False, indent=2)
-            logger.info("History saved successfully")
-        except Exception as e:
-            logger.error(f"Failed to save history: {e}")
+        self.actionShow_Detect_History.triggered.connect(lambda: self.history_manager.show_ocr_history(self))
+        self.actionShow_Translator_History.triggered.connect(lambda: self.history_manager.show_translate_history(self))
+        self.actionAll_Log.triggered.connect(lambda: log_viewer_mod.show_log(self, "Debug/All.log"))
 
     # ---------- 工具 ----------
     def format_ocr_text(self, text):
@@ -486,7 +124,6 @@ class MainApplication(QtWidgets.QMainWindow, Ui_MainWindow):
         provider = self.api_mode.config.api_type if self.is_api_mode else "Local(PaddleOCR)"
         logger.info(f"[OCR] mode={'API' if self.is_api_mode else 'Local'} provider={provider}")
         self.statusbar.showMessage(f"OCR 模式：{'API' if self.is_api_mode else '本地'} / 供應者：{provider}", 3000)
-
 
         try:
             selector = RegionSelector()
@@ -519,7 +156,7 @@ class MainApplication(QtWidgets.QMainWindow, Ui_MainWindow):
                     self.on_ocr_error(err_msg)
 
                 # 延遲數十毫秒啟動，避免白色空窗
-                QtCore.QTimer.singleShot(50, lambda: self.ocr_worker.start(finished_callback, error_callback))
+                QtCore.QTimer.singleShot(100, lambda: self.ocr_worker.start(finished_callback, error_callback))
 
                 # 取消 → 直接 terminate 子進程
                 progress.canceled.connect(lambda: (self.ocr_worker.cancel(), progress.close()))
@@ -535,7 +172,7 @@ class MainApplication(QtWidgets.QMainWindow, Ui_MainWindow):
         self.OCR_Detect_Text.setPlainText(formatted_text)
         self.ocr_history.insert(0, {"timestamp": timestamp, "text": formatted_text, "image_path": None})
         self.ocr_history = self.ocr_history[:self.max_history]
-        self.save_history()
+        self.history_manager.save()
         logger.info("OCR completed successfully")
         self.statusbar.showMessage("OCR 完成 / OCR completed", 5000)
 
@@ -599,7 +236,7 @@ class MainApplication(QtWidgets.QMainWindow, Ui_MainWindow):
         self.Translated_Text.setPlainText(translated_text)
         self.translate_history.insert(0, {"timestamp": timestamp, "text": translated_text})
         self.translate_history = self.translate_history[:self.max_history]
-        self.save_history()
+        self.history_manager.save()
         self.statusbar.showMessage("翻譯完成 / Translation completed", 5000)
         logger.info("Translation completed successfully")
 
@@ -654,14 +291,14 @@ class MainApplication(QtWidgets.QMainWindow, Ui_MainWindow):
                 )
                 self.is_api_mode = True
                 # 若需要，這裡可關閉本地翻譯或做資源釋放
-                self.translator = None  # 可選：進入 API 模式時不保留本地模型
+                self.translator = None  # 進入 API 模式時不保留本地模型
                 if hasattr(self, "statusbar") and self.statusbar:
                     self.statusbar.showMessage("已切換到 API 模式 / Switched to API mode", 5000)
                 logger.info("Switched to API mode: api=%s, target=%s, model=%s",api_type, target_lang, self.api_mode.config.model or "(default)")
             else:
                 self.is_api_mode = False
                 # 回到本地模式時，如需重新初始化本地翻譯/OCR，可在這裡處理
-                self.init_translator()  # 可選：若你要即時重建本地 NLLB
+                self.init_translator()  # 即時重建本地 NLLB
                 if hasattr(self, "statusbar") and self.statusbar:
                     self.statusbar.showMessage("已切換到本地模式 / Switched to Local mode", 5000)
                 logger.info("Switched to Local mode")
@@ -786,8 +423,9 @@ class MainApplication(QtWidgets.QMainWindow, Ui_MainWindow):
 
         dialog.setLayout(layout)
         dialog.exec()
-
-
+    
+    def show_log(self, log_file):
+        return log_viewer_mod.show_log(self, log_file)
     # ========= OCR 設定視窗（含即時檢查、紅框紅字、自動補齊）=========
     def show_ocr_setting(self):
         from PyQt6 import QtWidgets
@@ -801,7 +439,7 @@ class MainApplication(QtWidgets.QMainWindow, Ui_MainWindow):
 
         # ===== 基底模型路徑 =====
         base_label = QtWidgets.QLabel("基底模型路徑 / Base Model Directory")
-        base_edit  = QtWidgets.QLineEdit(guess_ocr_base_dir_from_cfg(cfg) or r"D:\models\paddleocr")
+        base_edit  = QtWidgets.QLineEdit(ocr_paths_mod.guess_ocr_base_dir_from_cfg(cfg) or r"D:\models\paddleocr")
         browse_btn = QtWidgets.QPushButton("瀏覽… / Browse…")
         h_base = QtWidgets.QHBoxLayout(); h_base.addWidget(base_edit); h_base.addWidget(browse_btn)
         form.addRow(base_label, h_base)
@@ -859,7 +497,7 @@ class MainApplication(QtWidgets.QMainWindow, Ui_MainWindow):
             base = base_edit.text().strip()
             if not base:
                 return
-            paths = build_ocr_dirs_from_base(base, cfg)
+            paths = ocr_paths_mod.build_ocr_dirs_from_base(base, cfg)
             if not unwarp_dir.text().strip():   unwarp_dir.setText(paths["doc_unwarping_model_dir"])
             if not textline_dir.text().strip(): textline_dir.setText(paths["textline_orientation_model_dir"])
             if not docori_dir.text().strip():   docori_dir.setText(paths["doc_orientation_classify_model_dir"])
@@ -868,7 +506,7 @@ class MainApplication(QtWidgets.QMainWindow, Ui_MainWindow):
 
         auto_btn.clicked.connect(autofill_paths)
 
-        # ===== 你的原本執行參數（完整保留）=====
+        # ===== 原本執行參數 =====
         lang_combo = QtWidgets.QComboBox()
         lang_combo.addItems(["en", "ch", "chinese_cht", "japan"])
         if lang_combo.findText(cfg.lang) >= 0:
@@ -1172,7 +810,6 @@ class MainApplication(QtWidgets.QMainWindow, Ui_MainWindow):
                         text_detection_model_name: str,
                         text_recognition_model_dir: str,
                         text_recognition_model_name: str,
-                        # 你的原本參數（加回）
                         lang: str,
                         device: str,
                         cpu_threads: int,
@@ -1227,7 +864,7 @@ class MainApplication(QtWidgets.QMainWindow, Ui_MainWindow):
         )
 
         if base_dir:
-            auto_paths = build_ocr_dirs_from_base(base_dir, temp_cfg)
+            auto_paths = ocr_paths_mod.build_ocr_dirs_from_base(base_dir, temp_cfg)
             if not temp_cfg.doc_unwarping_model_dir:
                 temp_cfg.doc_unwarping_model_dir = auto_paths["doc_unwarping_model_dir"]
             if not temp_cfg.textline_orientation_model_dir:
@@ -1557,95 +1194,6 @@ class MainApplication(QtWidgets.QMainWindow, Ui_MainWindow):
             logger.exception("Failed to update translator config")
             if hasattr(self, "statusbar") and self.statusbar:
                 self.statusbar.showMessage(f"翻譯設定更新失敗 / Failed to update settings：{e}", 5000)
-
-
-
-
-    # =========================
-    # 歷史視窗
-    # =========================
-    def show_ocr_history(self):
-        logger.debug("Showing OCR history")
-        dialog = QtWidgets.QDialog(self)
-        dialog.setWindowTitle("OCR 歷史記錄 / OCR History")
-        layout = QtWidgets.QVBoxLayout()
-        list_widget = QtWidgets.QListWidget()
-        for item in self.ocr_history:
-            list_widget.addItem(f"{item['timestamp']}: {item['text'][:50]}...")
-        list_widget.itemClicked.connect(lambda item: self.recall_ocr_text(list_widget.currentRow()))
-        layout.addWidget(list_widget)
-        btn_box = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.StandardButton.Close)
-        btn_box.rejected.connect(dialog.reject)
-        layout.addWidget(btn_box)
-        dialog.setLayout(layout)
-        dialog.exec()
-
-    def recall_ocr_text(self, index):
-        logger.debug(f"Recalling OCR history item {index}")
-        if 0 <= index < len(self.ocr_history):
-            formatted_text = self.format_ocr_text(self.ocr_history[index]["text"])
-            self.OCR_Detect_Text.setPlainText(formatted_text)
-            self.statusbar.showMessage("已載入 OCR 歷史記錄 / OCR history loaded", 3000)
-            logger.info(f"Recalled OCR history item {index}")
-
-    def show_translate_history(self):
-        logger.debug("Showing translate history")
-        dialog = QtWidgets.QDialog(self)
-        dialog.setWindowTitle("翻譯歷史記錄 / Translation History")
-        layout = QtWidgets.QVBoxLayout()
-        list_widget = QtWidgets.QListWidget()
-        for item in self.translate_history:
-            list_widget.addItem(f"{item['timestamp']}: {item['text'][:50]}...")
-        list_widget.itemClicked.connect(lambda item: self.recall_translated_text(list_widget.currentRow()))
-        layout.addWidget(list_widget)
-        btn_box = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.StandardButton.Close)
-        btn_box.rejected.connect(dialog.reject)
-        layout.addWidget(btn_box)
-        dialog.setLayout(layout)
-        dialog.exec()
-
-    def recall_translated_text(self, index):
-        logger.debug(f"Recalling translate history item {index}")
-        if 0 <= index < len(self.translate_history):
-            formatted_text = self.format_ocr_text(self.translate_history[index]["text"])
-            self.Translated_Text.setPlainText(formatted_text)
-            self.statusbar.showMessage("已載入翻譯歷史記錄 / Translation history loaded", 3000)
-            logger.info(f"Recalled translate history item {index}")
-
-    # =========================
-    # 日誌視窗
-    # =========================
-    def show_log(self, log_file):
-        logger.debug(f"Showing log file: {log_file}")
-        try:
-            with open(log_file, "r", encoding="utf-8") as f:
-                content = f.read()
-        except UnicodeDecodeError:
-            logger.warning(f"UTF-8 decoding failed for {log_file}, trying 'gbk'")
-            try:
-                with open(log_file, "r", encoding="gbk") as f:
-                    content = f.read()
-            except Exception as e:
-                logger.error(f"Failed to decode {log_file} with GBK: {e}")
-                content = f"無法讀取日誌檔案 / Unable to read log file: {e}"
-        except Exception as e:
-            logger.error(f"Failed to show log {log_file}: {e}")
-            content = f"無法顯示日誌 {log_file} / Failed to show log {log_file}: {e}"
-
-        dialog = QtWidgets.QDialog(self)
-        dialog.setWindowTitle(f"日誌 / Log: {log_file}")
-        layout = QtWidgets.QVBoxLayout()
-        text_edit = QtWidgets.QTextEdit()
-        text_edit.setReadOnly(True)
-        text_edit.setPlainText(content)
-        layout.addWidget(text_edit)
-        btn_box = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.StandardButton.Close)
-        btn_box.rejected.connect(dialog.reject)
-        layout.addWidget(btn_box)
-        dialog.setLayout(layout)
-        dialog.resize(600, 400)
-        dialog.exec()
-
 
 if __name__ == "__main__":
     logger.debug("Starting application")
