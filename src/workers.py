@@ -184,7 +184,7 @@ class TranslationWorker:
 
 
 class OCRWorker:
-    def __init__(self, img_array, api_mode, is_api_mode, ocr_processor):
+    def __init__(self, img_array, api_mode, is_api_mode, ocr_cfg):
         # Accept ndarray or file path; if ndarray, we'll persist to temp file before starting process
         self.img_source = img_array
         self.is_api_mode = is_api_mode
@@ -196,7 +196,7 @@ class OCRWorker:
             "target_lang": api_mode.config.target_lang,
         }
 
-        cfg = ocr_processor.config
+        cfg = ocr_cfg
         self.ocr_cfg_dict = {
             "ocr_version": cfg.ocr_version,
 

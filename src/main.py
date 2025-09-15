@@ -43,6 +43,7 @@ class MainApplication(QtWidgets.QMainWindow, Ui_MainWindow):
         # 狀態成員
         self.max_history = 10
         self.ocr_processor = None
+        self.ocr_cfg = None
         self.translator = None
         self.api_mode = APIMode()
         self.is_api_mode = False  # 由 UI 切換
@@ -88,8 +89,9 @@ class MainApplication(QtWidgets.QMainWindow, Ui_MainWindow):
         #self.init_translator()
 
     def init_ocr_processor(self):
-        ocr_config = OCR_Processor_Config(device="cpu")
-        self.ocr_processor = OCR_Processor(ocr_config)
+        # Prepare OCR config only; defer heavy model init to run time
+        self.ocr_cfg = OCR_Processor_Config(device="cpu")
+        self.ocr_processor = None
 
     def init_translator(self):
         self.translator = None
@@ -143,7 +145,7 @@ class MainApplication(QtWidgets.QMainWindow, Ui_MainWindow):
                 progress.show()
                 QtWidgets.QApplication.processEvents()  # 先讓 UI 畫好，避免白框
 
-                self.ocr_worker = OCRWorker(img_array, self.api_mode, self.is_api_mode, self.ocr_processor)
+                self.ocr_worker = OCRWorker(img_array, self.api_mode, self.is_api_mode, self.ocr_cfg)
 
                 def finished_callback(result_text):
                     progress.close()
@@ -431,7 +433,7 @@ class MainApplication(QtWidgets.QMainWindow, Ui_MainWindow):
         from PyQt6 import QtWidgets
         from PyQt6.QtWidgets import QFileDialog
 
-        cfg = self.ocr_processor.config
+        cfg = self.ocr_cfg
 
         dlg = QtWidgets.QDialog(self)
         dlg.setWindowTitle("OCR 設定 / OCR Settings")
@@ -498,11 +500,12 @@ class MainApplication(QtWidgets.QMainWindow, Ui_MainWindow):
             if not base:
                 return
             paths = ocr_paths_mod.build_ocr_dirs_from_base(base, cfg)
-            if not unwarp_dir.text().strip():   unwarp_dir.setText(paths["doc_unwarping_model_dir"])
-            if not textline_dir.text().strip(): textline_dir.setText(paths["textline_orientation_model_dir"])
-            if not docori_dir.text().strip():   docori_dir.setText(paths["doc_orientation_classify_model_dir"])
-            if not det_dir.text().strip():      det_dir.setText(paths["text_detection_model_dir"])
-            if not rec_dir.text().strip():      rec_dir.setText(paths["text_recognition_model_dir"])
+            # Always fill based on base directory selection
+            unwarp_dir.setText(paths["doc_unwarping_model_dir"])
+            textline_dir.setText(paths["textline_orientation_model_dir"])
+            docori_dir.setText(paths["doc_orientation_classify_model_dir"])
+            det_dir.setText(paths["text_detection_model_dir"])
+            rec_dir.setText(paths["text_recognition_model_dir"])
 
         auto_btn.clicked.connect(autofill_paths)
 
@@ -830,7 +833,7 @@ class MainApplication(QtWidgets.QMainWindow, Ui_MainWindow):
 
         # 路徑自動補齊（僅填空）
         temp_cfg = OCR_Processor_Config(
-            ocr_version=self.ocr_processor.config.ocr_version,
+            ocr_version=self.ocr_cfg.ocr_version,
 
             use_doc_unwarping=use_doc_unwarping,
             doc_unwarping_model_name=doc_unwarping_model_name,
@@ -973,7 +976,9 @@ class MainApplication(QtWidgets.QMainWindow, Ui_MainWindow):
 
         # 重建 Processor
         try:
-            self.ocr_processor = OCR_Processor(temp_cfg)
+            # Lazy store config; defer model initialization to OCR run
+            self.ocr_cfg = temp_cfg
+            self.ocr_processor = None
             if hasattr(self, "statusbar") and self.statusbar:
                 self.statusbar.showMessage("OCR 設定已更新 / OCR settings updated", 3000)
             logging.getLogger("main").info("OCR settings updated successfully")

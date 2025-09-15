@@ -29,20 +29,49 @@ def build_ocr_dirs_from_base(base_dir: str, cfg) -> dict:
     }
 
 
+def _norm_parent(p: str) -> str | None:
+    try:
+        if not p or not isinstance(p, str):
+            return None
+        p = os.path.normpath(p)
+        # If given a directory path, return its parent as the base
+        return os.path.dirname(p)
+    except Exception:
+        return None
+
+
 def guess_ocr_base_dir_from_cfg(cfg) -> str | None:
-    """Guess a common OCR base directory from current *_model_dir values."""
-    candidates = [
-        cfg.doc_unwarping_model_dir,
-        cfg.textline_orientation_model_dir,
-        cfg.doc_orientation_classify_model_dir,
-        cfg.text_detection_model_dir,
-        cfg.text_recognition_model_dir,
+    """Guess a robust common base directory from current *_model_dir values.
+
+    Strategy:
+    - Collect parents of all provided model dirs (existing or not).
+    - Prefer an existing directory parent shared by multiple entries (common path).
+    - Fallback to the first non-empty parent.
+    """
+    raw_dirs = [
+        getattr(cfg, "doc_unwarping_model_dir", None),
+        getattr(cfg, "textline_orientation_model_dir", None),
+        getattr(cfg, "doc_orientation_classify_model_dir", None),
+        getattr(cfg, "text_detection_model_dir", None),
+        getattr(cfg, "text_recognition_model_dir", None),
     ]
-    for p in candidates:
-        if p and isinstance(p, str) and os.path.isdir(p):
-            return os.path.dirname(p)
-    for p in candidates:
-        if p and isinstance(p, str):
-            return os.path.dirname(p)
-    return None
+    parents = [d for d in (_norm_parent(p) for p in raw_dirs) if d]
+    if not parents:
+        return None
+
+    # Prefer a common existing parent
+    try:
+        common = os.path.commonpath(parents)
+        if os.path.isdir(common):
+            return common
+    except Exception:
+        pass
+
+    # Next, prefer any existing parent that contains at least one provided dir
+    for d in parents:
+        if os.path.isdir(d):
+            return d
+
+    # Fallback: first parent even if it does not exist yet
+    return parents[0]
 
