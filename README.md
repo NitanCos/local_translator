@@ -1,20 +1,24 @@
 # Local and API translator
 
+  <a href="https://www.python.org/downloads/">
+    <img alt="PyPI - Python Version" src="https://img.shields.io/badge/pyversion-3.12%2B-blue?style=flat&label=python">
+  </a>  
+
 ## Project Preview
 
-This is a desktop application for Optical Character Recognition (OCR) and text translation, supporting multiple languages and modes.
-It uses PaddleOCR for text detection and recognition, and integrates translation via local NLLB models or external APIs like Gemini and DeepL.
+This is a desktop application for Optical Character Recognition (OCR) and text translation, supporting multiple languages and modes.  
+
+It uses PaddleOCR for text detection and recognition, and integrates translation via local NLLB models or external APIs like Gemini and DeepL.  
+
 The tool features a PyQt6-based GUI for easy screenshot capture, OCR processing, and translation.
 Ideal for users needing quick text extraction and translation from images, such as screenshots or documents.
-
-Key technologies: Python, PyQt6, PaddleOCR, Transformers (for NLLB), Requests (for APIs).
 
 ## Feature
 
 - Screenshot Capture: Select and capture screen regions for OCR.
-- OCR Processing: Detect and recognize text in images using PaddleOCR v5, with configurable parameters like language and thresholds.
+- OCR Processing: Detect and recognize text in images using PPOCR v5, with configurable parameters like language and thresholds.
 - Translation:
-  - Local mode: Uses Facebook's NLLB-200 models (distilled variants: 600M, 1.3B, 3.3B) for offline translation.
+  - Local mode: Uses Facebook's NLLB-200 models (distilled variants: 600M, 1.3B, 3.3B) for offline translation.(and you can freely define and choose the local model you want to use.)
   - API mode: Integrates with Gemini (for OCR + translation) or DeepL (for translation after local OCR).
 - Supports source language auto-detection and target languages like English, Japanese, Simplified/Traditional Chinese.
 - GUI Interface: User-friendly interface with text display, copy/clear buttons, history logs, and settings menus.
@@ -73,9 +77,12 @@ Python 3.12+
 
 5. For PaddleOCR:
 
-   ```bash
-   # Needed models will put inside
-   cd local_translater/models/paddleocr
+   ```text
+   # You need to download the required model through the following link and use a model that matches your device’s performance.
+   https://www.paddleocr.ai/main/version3.x/module_usage/doc_img_orientation_classification.html
+   https://www.paddleocr.ai/main/version3.x/module_usage/text_detection.html
+   https://www.paddleocr.ai/main/version3.x/module_usage/text_image_unwarping.html
+   https://www.paddleocr.ai/main/version3.x/module_usage/textline_orientation_classification.html
    ```
 
 ### Run
@@ -86,9 +93,9 @@ python main.py
 
 ## Usage Step
 
-   1. Setup the Local Translator model (if you just want to use the API mode, select Cancel)  
+   1. Setup the Local Translator model location **(if you just want to use the API mode, select Cancel)**
 
-      The meaning of parameters can find in **[reference.txt](./CPUver/reference.txt)**
+      The meaning of parameters can find in **[reference.md](./CPUver/reference.md)**
       <p align="left"><img src="./img/img1.png" alt="Translater setting" width="500"></p>
    2. Select Mode (and enter the API Key)
       <p align="left"><img src="./img/img2.png" alt="API mode setting" width="300"></p>
@@ -101,13 +108,20 @@ python main.py
       ./models/paddleocr
       ```
 
-      The meaning of parameters can find in **[reference.txt](./CPUver/reference.txt)**
+      The meaning of parameters can find in **[reference.md](./CPUver/reference.md)**
    4. Start Translate (GUI view)
       <p align="left"><img src="./img/img5.png" alt="Local mode setting" width="300"></p>
 
-## Acknowledgments
+## Credits
 
-- PaddleOCR for OCR engine.
-- Hugging Face Transformers for NLLB models.
-- Google Gemini and DeepL for API integrations.
-- PyQt6 for GUI framework.
+- PaddleOCR - <https://github.com/PaddlePaddle/PaddleOCR>
+- Hugging Face Transformers for NLLB models.(nllb-200-distilled-600M) - <https://huggingface.co/facebook/nllb-200-distilled-600M>
+- Hugging Face Transformers for NLLB models.(nllb-200-distilled-1.3B) - <https://huggingface.co/facebook/nllb-200-distilled-1.3B>
+- Hugging Face Transformers for NLLB models.(nllb-200-3.3B) - <https://huggingface.co/facebook/nllb-200-3.3B>
+
+## License
+
+   This project is released under the [Apache 2.0 license](./LICENSE.md)
+   > **[!NOTICE]**
+      > This project uses the NLLB-200 model from Meta AI (license under CC-BY-NC-4.0).  
+      > As a result, while the source code is Apchace-2.0, the overall project is restricted to NON-COMMERIAL-USE.
