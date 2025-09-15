@@ -1,0 +1,463 @@
+## OCR Processor Parameters 
+
+(中文說明)
+
+1. **lang (語言)**
+    意義：指定 OCR 文本識別的語言。影響：  
+
+    支援的語言包括 'en'（英文）、'ch'（中文）等，具體取決於 PaddleOCR 模型支援。  
+    正確選擇語言可確保目標語言的文本識別準確性。  
+    邊緣案例：選擇不支援或錯誤的語言（例如對中文文本選擇 'en'）可能導致識別準確率低或失敗。請確保語言與輸入內容匹配。
+
+
+2. **cpu_threads (CPU 線程數)**
+    意義：定義使用 CPU 進行推理時的並行處理線程數。影響：  
+
+    較高值（例如 12）：增加並行性，在多核 CPU 上加速處理。  
+    較低值（例如 4）：減少資源使用，但可能降低處理速度。  
+    邊緣案例：設置過多線程（例如超過可用 CPU 核心數）可能導致資源爭用，降低性能。請根據系統能力調整。
+
+
+3. **enable_hpi (啟用高性能推理)**
+    意義：啟用高性能推理優化以加速處理。影響：  
+
+    True：啟動優化，可能以輕微的準確性代價提升速度。  
+    False：使用標準推理，優先考慮準確性而非速度。  
+    邊緣案例：在低資源系統上啟用 HPI 可能導致不穩定或崩潰。請在目標硬體上測試後啟用。
+
+
+4. **enable_mkldnn (啟用 MKLDNN)**
+    意義：啟用 Intel 的 MKLDNN（深度神經網絡數學核心庫）以優化 CPU 性能。影響：  
+
+    True：在 Intel CPU 上提升推理速度。  
+    False：禁用 MKLDNN，使用標準 CPU 計算，可能較慢。  
+    邊緣案例：在非 Intel CPU 上啟用 MKLDNN 可能無效或導致錯誤。
+
+
+5. **use_doc_unwarping (文本圖像校正)**
+    意義：啟用對變形文檔圖像的校正功能。影響：  
+
+    True：校正圖像變形（例如彎曲頁面），提升變形圖像的文本檢測準確性。  
+    False：跳過校正，速度較快，但對變形文檔的準確性較低。  
+    邊緣案例：對無變形的圖像啟用可能增加不必要的處理開銷。僅對掃描或拍攝的變形文檔使用。
+
+
+6. **use_textline_orientation (文本行方向判斷)**
+    意義：啟用文本行方向（例如旋轉或傾斜文本）的檢測。影響：  
+
+    True：檢測並校正文本方向，提升旋轉文本的識別效果。  
+    False：假設標準方向，速度較快，但對旋轉或傾斜文本可能失敗。  
+    邊緣案例：對標準對齊的文本啟用可能增加處理時間而無益處。請用於存在方向問題的圖像。
+
+
+7. **use_doc_orientation_classify (文檔方向判斷)**
+    意義：啟用文檔方向分類（例如 90°、180° 旋轉）。影響：  
+
+    True：檢測並校正文檔旋轉，提升錯位文檔的 OCR 準確性。  
+    False：假設正確方向，速度較快，但對旋轉文檔可能失敗。  
+    邊緣案例：對正確對齊的文檔啟用會增加計算開銷。請用於可能存在旋轉的掃描或拍攝文檔。
+
+
+8. **text_det_limit_side_len (文本檢測限制邊長)**
+    意義：設置文本檢測時圖像縮放的最大或最小邊長（單位：像素）。影響：  
+
+    較高值（例如 960）：保留更多圖像細節，提升高解析度圖像的檢測效果。  
+    較低值（例如 16）：減少記憶體使用並加速處理，但可能遺漏小文本。  
+    邊緣案例：極低值可能導致小文本無法檢測；極高值可能在低資源系統上超出記憶體限制。
+
+
+9. **text_det_limit_type (文本檢測限制類型)**
+    意義：指定 text_det_limit_side_len 作為最小 ('min') 或最大 ('max') 約束。影響：  
+
+    'min'：確保圖像最短邊至少達到該長度，保留小圖像的細節。  
+    'max'：限制圖像最長邊，減少大圖像的記憶體使用。  
+    邊緣案例：對小圖像設置高 'min' 值可能導致過度放大，增加計算時間。請根據輸入圖像大小調整。
+
+
+10. **text_det_box_thresh (文本檢測框閾值)**
+    意義：設置檢測文本邊界框的置信度閾值。影響：  
+
+    較高值（例如 0.7）：需要更高置信度，減少誤檢但可能遺漏模糊文本。  
+    較低值（例如 0.3）：檢測更多文本，包括模糊或噪聲文本，但可能增加誤檢。  
+    邊緣案例：過低閾值可能檢測到非文本元素（例如線條、形狀）；過高可能遺漏低質量圖像中的有效文本。
+
+
+11. **text_det_thresh (文本檢測像素閾值)**
+    意義：設置圖像中文本檢測的像素級置信度閾值。影響：  
+
+    較高值（例如 0.5）：更保守的檢測，減少噪聲但可能遺漏模糊文本。  
+    較低值（例如 0.3）：更包容的檢測，捕獲模糊文本但增加噪聲。  
+    邊緣案例：低閾值可能在噪聲圖像中檢測非文本區域；高閾值可能遺漏低對比度圖像中的有效文本。
+
+
+12. **ext_det_unclip_ratio (文本檢測擴張係數)**
+    意義：控制檢測到的文本邊界框的擴張比例，以包含周圍上下文。影響：  
+
+    較高值（例如 2.0）：擴大邊界框，捕獲更多上下文但可能包含無關區域。  
+    較低值（例如 1.0）：邊界框更緊密，聚焦核心文本但可能截斷字符。  
+    邊緣案例：過高比例可能合併相鄰文本框，導致識別錯誤；過低比例可能截斷文本，特別在密集佈局中。
+
+
+
+# OCR Processor Parameters
+
+### (English Descriptions)
+
+1. **lang (Language)**
+    Meaning: Specifies the language for OCR text recognition.Impact:  
+
+    Supported languages include 'en' (English), 'ch' (Chinese), etc., depending on PaddleOCR's model support.  
+    Correct language selection ensures accurate text recognition for the target language.  
+    Edge Case: Choosing an unsupported or incorrect language (e.g., 'en' for Chinese text) may lead to poor recognition accuracy or failure. Ensure the language matches the input content.
+
+
+2. **cpu_threads (CPU Threads)**
+    Meaning: Defines the number of CPU threads for parallel processing when using CPU for inference.Impact:  
+
+    Higher values (e.g., 12): Increases parallelism, speeding up processing on multi-core CPUs.  
+    Lower values (e.g., 4): Reduces resource usage but may slow down processing.  
+    Edge Case: Setting too many threads (e.g., exceeding available CPU cores) may lead to resource contention, slowing performance. Adjust based on system capabilities.
+
+
+3. **enable_mkldnn (Enable MKLDNN)**
+    Meaning: Enables Intel's MKLDNN (Math Kernel Library for Deep Neural Networks) for optimized CPU performance.Impact:  
+
+    True: Boosts CPU inference speed, especially on Intel CPUs.  
+    False: Disables MKLDNN, using standard CPU computation, which may be slower.  
+    Edge Case: MKLDNN is only effective on Intel CPUs; enabling it on non-Intel systems may have no effect or cause errors.
+
+
+4. **use_doc_unwarping (Document Image Unwarping)**
+    Meaning: Enables correction of distorted document images before OCR processing.Impact:  
+
+    True: Corrects warping (e.g., curved pages), improving text detection accuracy for distorted images.  
+    False: Skips unwarping, faster but less accurate for distorted documents.  
+    Edge Case: Enabling for non-distorted images may add unnecessary processing overhead. Use only for scanned or photographed documents with visible distortion.
+
+
+5. **use_textline_orientation (Text Line Orientation Detection)**
+    Meaning: Enables detection of text line orientation (e.g., rotated or angled text).Impact:  
+
+    True: Detects and corrects text orientation, improving recognition for rotated text.  
+    False: Assumes standard orientation, faster but may fail for rotated or angled text.  
+    Edge Case: Enabling for standard-aligned text may increase processing time without benefits. Use for images with known orientation issues.
+
+
+6. **use_doc_orientation_classify (Document Orientation Classification)**
+    Meaning: Enables classification of document orientation (e.g., 90°, 180° rotation).Impact:  
+
+    True: Detects and corrects document rotation, improving OCR accuracy for misaligned documents.  
+    False: Assumes correct orientation, faster but may fail for rotated documents.  
+    Edge Case: Unnecessary for properly aligned documents, as it adds computational overhead. Enable for scanned or photographed documents with potential rotation.
+
+
+7. **text_det_limit_side_len (Text Detection Limit Side Length)**
+    Meaning: Sets the maximum or minimum side length (in pixels) for resizing images during text detection.Impact:  
+
+    Higher values (e.g., 960): Preserves more image details, improving detection for high-resolution images.  
+    Lower values (e.g., 16): Reduces memory usage and speeds up processing but may miss small text.  
+    Edge Case: Extremely low values may cause small text to be undetectable; extremely high values may exceed memory limits on low-resource systems.
+
+
+8. **text_det_limit_type (Text Detection Limit Type)**
+    Meaning: Specifies whether text_det_limit_side_len applies as a minimum ('min') or maximum ('max') constraint.Impact:  
+
+    'min': Ensures the image’s shortest side is at least this length, preserving details for small images.  
+    'max': Caps the image’s longest side, reducing memory usage for large images.  
+    Edge Case: Setting 'min' with a high value for small images may lead to excessive upscaling, increasing computation time. Adjust based on input image sizes.
+
+
+9. **text_det_box_thresh (Text Detection Box Threshold)**
+    Meaning: Sets the confidence threshold for detecting text bounding boxes.Impact:  
+
+    Higher values (e.g., 0.7): Requires higher confidence, reducing false positives but potentially missing faint text.  
+    Lower values (e.g., 0.3): Detects more text, including faint or noisy text, but may increase false positives.  
+    Edge Case: Too low a threshold may detect non-text elements (e.g., lines, shapes), while too high may miss valid text in low-quality images.
+
+
+10. **text_det_thresh (Text Detection Pixel Threshold)**
+    Meaning: Sets the pixel-level confidence threshold for text detection in the image.Impact:  
+
+    Higher values (e.g., 0.5): More conservative detection, reducing noise but potentially missing faint text.  
+    Lower values (e.g., 0.3): More inclusive detection, capturing faint text but increasing noise.  
+    Edge Case: Low thresholds may detect non-text regions in noisy images; high thresholds may skip valid text in low-contrast images.
+
+
+11. **text_det_unclip_ratio (Text Detection Unclip Ratio)**
+    Meaning: Controls the expansion ratio of detected text bounding boxes to include surrounding context.Impact:  
+
+    Higher values (e.g., 2.0): Expands boxes, capturing more context but potentially including irrelevant areas.  
+    Lower values (e.g., 1.0): Tighter boxes, focusing on core text but may clip parts of characters.  
+    Edge Case: Overly high ratios may merge adjacent text boxes, causing recognition errors; low ratios may truncate text, especially in dense layouts.
+
+
+
+# Translator parameters:
+
+### (中文說明)
+
+1. **max_new_tokens (最大生成 Token 數)**
+
+    意義：限制模型生成的翻譯輸出的最大 token 數量（不包括輸入 token）。Token 是模型內部的單詞或子詞單位。
+    影響：
+
+    較高值（如 512）：允許生成較長的翻譯，適合長句或段落，但增加計算時間和記憶體使用，可能導致冗長或不必要的填充。
+    較低值（如 50）：限制輸出長度，適合短句翻譯，加快生成速度，但可能截斷長句，導致翻譯不完整。
+    邊緣案例：如果輸入文本很長且 max_new_tokens 過低，可能導致翻譯不完整。建議根據輸入長度動態調整（如 2 倍輸入 token 數）。
+
+
+
+2. **min_length (最小長度)**
+
+    意義：強制生成翻譯的最小 token 數量。
+    影響：
+
+    較高值（如 50）：確保翻譯有一定長度，避免過短的輸出，適合需要詳細翻譯的場景。
+    較低值或 0：允許短翻譯，適合簡短輸入，但可能導致過於簡化的結果。
+    注意：若 min_length 設置過高，可能導致模型填充無意義詞語，降低翻譯質量。應與輸入長度相關聯設置。
+
+
+
+3. **num_beams (Beam 數)**
+
+    意義：控制 beam search 的寬度，即在生成過程中同時追蹤的候選序列數量。Beam search 是一種貪婪搜索的擴展，旨在找到更高概率的序列。
+    影響：
+
+    較高值（如 10 或 20）：探索更多候選序列，通常提高翻譯質量（更準確、流暢），但顯著增加計算成本（時間和記憶體）。
+    較低值（如 1 或 2）：接近貪婪搜索，速度快但可能犧牲質量，適合實時應用。
+    模型依賴：TranslateConfig.adjust_for_model 根據模型大小（600M、1.3B、3.3B）限制最大 beam 數，因為較小模型（如 600M）在高 beam 數下可能因記憶體限制而崩潰。
+    邊緣案例：高 num_beams 在短句上收益有限，可能只增加延遲；長句或複雜語言（如日文到中文）受益更多。
+
+
+
+4. **early_stopping (早期停止)**
+
+    意義：決定是否在 beam search 中提前停止生成，當所有 beam 的得分不再顯著提高時停止。
+    影響：
+
+    啟用 (True)：減少不必要的計算，加快生成速度，特別在長序列或高 num_beams 時有效。但可能導致略微次優的翻譯（若提前停止過早）。
+    禁用 (False)：確保生成完整序列，質量可能更高，但計算時間較長。
+    模型依賴：600M 模型預設禁用（避免質量損失），而 1.3B 和 3.3B 模型啟用（因其計算能力更強，參考 adjust_for_model）。
+
+
+
+5. **length_penalty (長度懲罰)**
+
+    意義：調整生成序列長度的偏好，通過對序列概率應用長度相關的懲罰或獎勵（公式：score = log(prob) / (length ^ length_penalty)）。
+    影響：
+
+    正值（如 1.5）：鼓勵較長輸出，適合需要詳細翻譯的場景。
+    負值（如 -1.0）：偏好較短輸出，適合簡潔翻譯。
+    值為 1.0：無偏見，基於原始概率排序。
+    邊緣案例：過高（如 2.0）可能導致冗長翻譯；過低（如 -2.0）可能導致不完整句子。建議在 0.5 到 1.5 之間微調。
+
+
+
+6. **no_repeat_ngram_size (重複 N-gram 大小)**
+
+    意義：防止生成重複的 n-gram（連續 n 個 token 的序列）。若設為正整數（如 2），則禁止相同的 n-gram 重複出現。
+    影響：
+
+    正值（如 2 或 3）：減少重複詞語或短語，提高翻譯多樣性，適合長文本翻譯。
+    0：不限制重複，可能導致生成重複內容（特別在低質量輸入或模型過擬合時）。
+    模型依賴：1.3B 模型預設為 2（避免重複短語），600M 和 3.3B 預設為 0（依賴其他參數控制重複）。
+    邊緣案例：過高的值（如 5）可能限制模型表達能力，導致不自然的翻譯。
+
+
+7. **repetition_penalty (重複懲罰)**
+
+    意義：對已經生成過的 token 施加懲罰，降低其再次出現的概率（公式：P(token) = P(token) / (freq(token) ^ repetition_penalty)）。
+    影響：
+
+    較高值（如 2.0）：強烈抑制重複 token，增加多樣性，但可能導致不自然的輸出。
+    值為 1.0：無懲罰，依賴模型原始概率。
+    模型依賴：600M 和 1.3B 模型預設 1.2（輕微懲罰），3.3B 模型預設 1.0（因其語言生成能力更強）。
+    注意：與 no_repeat_ngram_size 配合使用，過高可能導致語義偏差。
+
+
+
+8. **do_sample (隨機採樣)**
+
+    意義：決定是否使用隨機採樣生成（而非 beam search）。若啟用，模型根據概率分佈隨機選擇下一個 token。
+    影響：
+
+    啟用 (True)：增加翻譯多樣性，適合創意性翻譯（如文學），但可能降低準確性。
+    禁用 (False)：使用 beam search 或貪婪搜索，生成更確定性（通常更準確）的結果，適合技術性翻譯。
+    邊緣案例：隨機採樣在低質量輸入或小模型（如 600M）上可能生成不一致結果。
+
+
+
+9. **temperature (溫度)**
+
+    意義：控制隨機採樣的隨機性（僅當 do_sample=True 時有效）。公式：P(token) = exp(log(P(token)) / temperature)。
+    影響：
+
+    較高值（如 2.0）：增加隨機性，生成更多樣但可能不準確的翻譯。
+    較低值（如 0.7）：使概率分佈更集中，生成更保守的結果。
+    值為 1.0：使用原始概率分佈。
+    邊緣案例：過低（如 0.1）可能導致生成單調結果；過高（如 5.0）可能生成無意義文本。
+
+
+
+10. **top_k (Top K)**
+
+    意義：在隨機採樣中，僅從概率最高的 K 個 token 中選擇（僅當 do_sample=True 時有效）。
+    影響：
+
+    較高值（如 100）：允許更多 token 候選，增加多樣性。
+    較低值（如 10）：限制為高概率 token，生成更穩定但較單一的結果。
+    值為 0：禁用 top-k 採樣，考慮所有 token。
+    邊緣案例：過低值可能限制模型表達能力，特別在多語言翻譯中。
+
+
+
+11. **top_p (Top P / Nucleus Sampling)**
+
+    意義：在隨機採樣中，選擇累積概率達到 p 的最小 token 集合（僅當 do_sample=True 時有效）。
+    影響：
+
+    較低值（如 0.5）：僅選高概率 token，生成更確定性結果。
+    較高值（如 1.0）：考慮更多 token，等同於無 top-p 限制。
+    邊緣案例：與 top_k 配合使用，過低值可能導致過於保守的翻譯，影響多樣性。
+
+
+
+12. **forced_bos_token_id (強制起始 Token ID)**
+
+    意義：強制生成的序列以特定語言的起始 token 開始（例如 zho_Hant 的 token ID）。在 NLLBTranslator 中由 bos_token_id 自動設置，基於目標語言。
+    影響：
+
+    確保翻譯輸出符合目標語言的語法和格式（例如，中文、日文等）。
+    一般由模型自動處理，用戶無需手動設置。
+    邊緣案例：若設置錯誤的 token ID，可能導致生成無效或混亂的輸出。
+13. **推薦設定**  
+
+    高質量翻譯（如技術文檔）：設置高 num_beams（如 10）、禁用 do_sample、低 temperature（如 0.7）、適中 length_penalty（如 1.0）。
+    快速翻譯（如即時聊天）：低 num_beams（如 2）、啟用 early_stopping、低 max_new_tokens（如 50）。
+    創意翻譯（如文學）：啟用 do_sample、高 temperature（如 1.5）、高 top_k（如 100）或低 top_p（如 0.9）。
+    避免重複：設置 no_repeat_ngram_size=2 或 repetition_penalty=1.2。
+
+
+# Translator Parameters
+
+###(English Descriptions)
+
+1. **max_new_tokens (Maximum Generated Token Count)**
+    Meaning: Limits the maximum number of tokens the model generates for the translation output (excluding input tokens). Tokens are the model's internal word or subword units.
+    Impact:
+
+    Higher values (e.g., 512): Allows for longer translations, suitable for long sentences or paragraphs, but increases computation time and memory usage, potentially leading to verbosity or unnecessary padding.
+    Lower values (e.g., 50): Restricts output length, suitable for short sentence translations, speeding up generation, but may truncate long sentences, resulting in incomplete translations.
+    Edge cases: If the input text is very long and max_new_tokens is too low, it may lead to incomplete translations. It is recommended to dynamically adjust based on input length (e.g., 2 times the input token count).
+
+
+2. **min_length (Minimum Length)**
+    Meaning: Forces the generation of a minimum number of tokens for the translation.
+    Impact:
+
+    Higher values (e.g., 50): Ensures a certain length for the translation, avoiding overly short outputs, suitable for scenarios requiring detailed translations.
+    Lower values or 0: Allows for short translations, suitable for brief inputs, but may lead to overly simplified results.
+    Note: If min_length is set too high, it may cause the model to pad with meaningless words, reducing translation quality. It should be set in relation to the input length.
+
+
+3. **num_beams (Beam Count)**
+    Meaning: Controls the width of beam search, i.e., the number of candidate sequences tracked simultaneously during generation. Beam search is an extension of greedy search aimed at finding higher-probability sequences.
+    Impact:
+
+    Higher values (e.g., 10 or 20): Explores more candidate sequences, typically improving translation quality (more accurate and fluent), but significantly increases computational cost (time and memory).
+    Lower values (e.g., 1 or 2): Approaches greedy search, fast but may sacrifice quality, suitable for real-time applications.
+    Model dependency: TranslateConfig.adjust_for_model limits the maximum beam count based on model size (600M, 1.3B, 3.3B), as smaller models (e.g., 600M) may crash due to memory constraints at high beam counts.
+    Edge cases: High num_beams yields limited benefits on short sentences, potentially only increasing latency; longer sentences or complex languages (e.g., Japanese to Chinese) benefit more.
+
+
+4. **early_stopping (Early Stopping)**
+    Meaning: Determines whether to stop generation early in beam search when all beams' scores no longer significantly improve.
+    Impact:
+
+    Enabled (True): Reduces unnecessary computation, speeding up generation, especially effective for long sequences or high num_beams. But may lead to slightly suboptimal translations (if stopping too early).
+    Disabled (False): Ensures complete sequence generation, potentially higher quality, but longer computation time.
+    Model dependency: Disabled by default for 600M model (to avoid quality loss), enabled for 1.3B and 3.3B models (due to stronger computational capabilities, refer to adjust_for_model).
+
+
+5. **length_penalty (Length Penalty)**
+    Meaning: Adjusts preference for sequence length by applying length-related penalties or rewards to sequence probabilities (formula: score = log(prob) / (length ^ length_penalty)).
+    Impact:
+
+    Positive values (e.g., 1.0): Encourages longer outputs, suitable for detailed translation scenarios.
+    Negative values (e.g., -1.0): Prefers shorter outputs, suitable for concise translations.
+    Value of 1.0: No bias, sorts based on raw probabilities.
+    Edge cases: Too high (e.g., 2.0) may lead to verbose translations; too low (e.g., -2.0) may result in incomplete sentences. Recommend fine-tuning between 0.5 and 1.5.
+
+
+6. **no_repeat_ngram_size (Repeat N-gram Size)**
+    Meaning: Prevents generation of repeated n-grams (sequences of n consecutive tokens). If set to a positive integer (e.g., 2), prohibits the same n-gram from repeating.
+    Impact:
+
+    Positive values (e.g., 2 or 3): Reduces repeated words or phrases, improving translation diversity, suitable for long text translations.
+    0: No restriction on repetition, may lead to repeated content (especially with low-quality inputs or model overfitting).
+    Model dependency: Default 2 for 1.3B model (avoids repeated short phrases), 0 for 600M and 3.3B (relies on other parameters for repetition control).
+    Edge cases: Too high values (e.g., 5) may limit model expressiveness, leading to unnatural translations.
+
+
+7. **repetition_penalty (Repetition Penalty)**
+    Meaning: Applies a penalty to tokens that have already been generated, reducing their probability of reappearing (formula: P(token) = P(token) / (freq(token) ^ repetition_penalty)).
+    Impact:
+
+    Higher values (e.g., 2.0): Strongly suppresses repeated tokens, increasing diversity, but may lead to unnatural outputs.
+    Value of 1.0: No penalty, relies on model's original probabilities.
+    Model dependency: Default 1.2 for 600M and 1.3B models (mild penalty), 1.0 for 3.3B model (due to stronger language generation capabilities).
+    Note: Use in conjunction with no_repeat_ngram_size; too high may cause semantic deviation.
+
+
+8. **do_sample (Random Sampling)**
+    Meaning: Determines whether to use random sampling for generation (instead of beam search). If enabled, the model randomly selects the next token based on the probability distribution.
+    Impact:
+
+    Enabled (True): Increases translation diversity, suitable for creative translations (e.g., literature), but may reduce accuracy.
+    Disabled (False): Uses beam search or greedy search, producing more deterministic (usually more accurate) results, suitable for technical translations.
+    Edge cases: Random sampling on low-quality inputs or small models (e.g., 600M) may produce inconsistent results.
+
+
+9. **temperature (Temperature)**
+    Meaning: Controls randomness in random sampling (effective only when do_sample=True). Formula: P(token) = exp(log(P(token)) / temperature).
+    Impact:
+
+    Higher values (e.g., 2.0): Increases randomness, generating more diverse but potentially inaccurate translations.
+    Lower values (e.g., 0.7): Makes the probability distribution more concentrated, producing more conservative results.
+    Value of 1.0: Uses the original probability distribution.
+    Edge cases: Too low (e.g., 0.1) may lead to monotonous outputs; too high (e.g., 5.0) may generate meaningless text.
+
+
+10. **top_k (Top K)**
+    Meaning: In random sampling, selects only from the top K most probable tokens (effective only when do_sample=True).
+    Impact:
+
+    Higher values (e.g., 100): Allows more token candidates, increasing diversity.
+    Lower values (e.g., 10): Limits to high-probability tokens, producing more stable but less varied results.
+    Value of 0: Disables top-k sampling, considers all tokens.
+    Edge cases: Too low values may limit model expressiveness, especially in multilingual translations.
+
+
+11. **top_p (Top P / Nucleus Sampling)**
+    Meaning: In random sampling, selects the smallest set of tokens whose cumulative probability reaches p (effective only when do_sample=True).
+    Impact:
+
+    Lower values (e.g., 0.5): Selects only high-probability tokens, producing more deterministic results.
+    Higher values (e.g., 1.0): Considers more tokens, equivalent to no top-p restriction.
+    Edge cases: When used with top_k, too low values may lead to overly conservative translations, affecting diversity.
+
+
+12. **forced_bos_token_id (Forced BOS Token ID)**
+    Meaning: Forces the generated sequence to start with a specific language's starting token (e.g., token ID for zho_Hant). In NLLBTranslator, it is automatically set by bos_token_id based on the target language.
+    Impact:
+
+    Ensures the translation output conforms to the target language's syntax and format (e.g., Chinese, Japanese, etc.).
+    Generally handled automatically by the model; users do not need to set manually.
+    Edge cases: Setting an incorrect token ID may lead to invalid or garbled outputs.
+
+
+13. **Recommend Setting**
+    High-quality translations (e.g., technical documents): Set high num_beams (e.g., 10), disable do_sample, low temperature (e.g., 0.7), moderate length_penalty (e.g., 1.0).
+    Fast translations (e.g., real-time chat): Low num_beams (e.g., 2), enable early_stopping, low max_new_tokens (e.g., 50).
+    Creative translations (e.g., literature): Enable do_sample, high temperature (e.g., 1.5), high top_k (e.g., 100) or low top_p (e.g., 0.9).
+    Avoid repetition: Set no_repeat_ngram_size=2 or repetition_penalty=1.2.
