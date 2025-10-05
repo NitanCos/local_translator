@@ -43,7 +43,7 @@ Python 3.12+
 2. Navigate to the project directory:
 
    ```bash
-   cd local_translator/CPUver
+   cd local_translator/src
    ```
 
 3. Install dependencies:
@@ -51,8 +51,18 @@ Python 3.12+
    ```bash
    pip install -r requirements.txt
    ```
+   Base on your current device (OCR)
+   ```bash
+   #cpu
+   python -m pip install paddlepaddle==3.2.0 -i https://www.paddlepaddle.org.cn/packages/stable/cpu/
+   #gpu,cuda=12.9
+   python -m pip install paddlepaddle-gpu==3.2.0 -i https://www.paddlepaddle.org.cn/packages/stable/cu129/
+   ```
 
-4. For NLLB models:
+4. For NLLB models:  
+   - [600M](https://huggingface.co/facebook/nllb-200-distilled-600M)
+   - [1.3B](https://huggingface.co/facebook/nllb-200-distilled-1.3B)
+   - [3.3B](https://huggingface.co/facebook/nllb-200-3.3B)
 
    (HTTP)
 
@@ -75,15 +85,13 @@ Python 3.12+
    hf download facebook/nllb-200-3.3B
    ```
 
-5. For PaddleOCR:
-
-   ```text
-   # You need to download the required model through the following link and use a model that matches your device’s performance.
-   https://www.paddleocr.ai/main/version3.x/module_usage/doc_img_orientation_classification.html
-   https://www.paddleocr.ai/main/version3.x/module_usage/text_detection.html
-   https://www.paddleocr.ai/main/version3.x/module_usage/text_image_unwarping.html
-   https://www.paddleocr.ai/main/version3.x/module_usage/textline_orientation_classification.html
-   ```
+5. For PaddleOCR:  
+   *You need to download the required model through the following link and use a model that matches your device’s performance.*
+   - [PP-LCNet_x1_0_doc_ori](https://www.paddleocr.ai/latest/version3.x/module_usage/doc_img_orientation_classification.html)
+   - [UVaDoc](https://www.paddleocr.ai/latest/version3.x/module_usage/text_image_unwarping.html)
+   - [PP-LCNet_x1_0_textline_ori or PP-LCNet_x0_25_textline_ori](https://www.paddleocr.ai/latest/version3.x/module_usage/textline_orientation_classification.html)
+   - [PP-OCRv5_det](https://www.paddleocr.ai/latest/version3.x/module_usage/text_detection.html#_2)
+   - [PP-OCRv5_rec](https://www.paddleocr.ai/latest/version3.x/module_usage/text_recognition.html)
 
 ### Run
 
@@ -102,7 +110,7 @@ python main.py
       <p align="left"><img src="./img/img3.png" alt="Local mode setting" width="300"></p>
    3. Setup the OCR model and parameters (except use Gemini API. Gemini API will use own OCR to recognize text.)
       <p align="left"><img src="./img/img4.png" alt="Local mode setting" width="300"></p>
-      please fill in the OCR model directory:  
+      please create and unzip the OCR model to the directory:  
 
       ```text
       ./models/paddleocr

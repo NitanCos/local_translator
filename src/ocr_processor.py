@@ -12,6 +12,7 @@ from pathlib import Path
 import re
 
 
+
 # 日誌設定
 # LOG_FORMAT = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
 # os.makedirs("Debug", exist_ok=True)  # 創建 Debug 目錄
@@ -25,21 +26,21 @@ class OCR_Processor_Config:
 
     use_doc_unwarping: bool = True  
     doc_unwarping_model_name: str = "UVDoc"  
-    doc_unwarping_model_dir: str = r".\models\paddleocr\UVDoc_infer"
+    doc_unwarping_model_dir: str = r"D:\models\paddleocr\UVDoc_infer"
 
     use_textline_orientation: bool = True  
-    textline_orientation_model_name	: str = "PP-LCNet_x1_0_textline_ori"  
-    textline_orientation_model_dir: str = r".\models\paddleocr\PP-LCNet_x1_0_textline_ori_infer"
+    textline_orientation_model_name	: str = "PP-LCNet_x0_25_textline_ori"  
+    textline_orientation_model_dir: str = r"D:\models\paddleocr\PP-LCNet_x0_25_textline_ori_infer"
     textline_orientation_batch_size: int = 1  
 
     use_doc_orientation_classify: bool = True 
-    doc_orientation_classify_model_dir: str = r".\models\paddleocr\PP-LCNet_x1_0_doc_ori_infer"
+    doc_orientation_classify_model_dir: str = r"D:\models\paddleocr\PP-LCNet_x1_0_doc_ori_infer"
     doc_orientation_classify_model_name: str = "PP-LCNet_x1_0_doc_ori"
 
-    text_detection_model_dir: str = r".\models\paddleocr\PP-OCRv5_mobile_det_infer"
+    text_detection_model_dir: str = r"D:\models\paddleocr\PP-OCRv5_mobile_det_infer"
     text_detection_model_name: str = "PP-OCRv5_mobile_det"
 
-    text_recognition_model_dir: str = r".\models\paddleocr\PP-OCRv5_mobile_rec_infer"
+    text_recognition_model_dir: str = r"D:\models\paddleocr\PP-OCRv5_mobile_rec_infer"
     text_recognition_model_name: str = "PP-OCRv5_mobile_rec"
 
     lang: str = 'en' #語言

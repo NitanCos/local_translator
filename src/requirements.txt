@@ -1,9 +1,43 @@
-paddleocr==3.2.0 
-transformers>=4.30.0
-torch>=2.6.0
+# GPU environment (RTX 30/40 series) - CUDA 12.6+
+
+# ==========================
+# 🔥 PyTorch (GPU build, CUDA 12.6)
+# ==========================
+# 若版本更新，可至 https://pytorch.org/get-started/locally/
+torch==2.8.0+cu126
+torchvision==0.23.0+cu126
+torchaudio==2.8.0+cu126
+--extra-index-url https://download.pytorch.org/whl/cu126
+
+# ==========================
+# 🤗 Transformers & HuggingFace stack
+# ==========================
+transformers>=4.44.0
+accelerate>=0.34.0
+safetensors>=0.4.5
+paddlepaddle==3.2.0 -i https://www.paddlepaddle.org.cn/packages/stable/cpu/
+paddleocr==3.2.0
+# ==========================
+# 🧠 PaddleOCR (GPU,CUDA=12.9)
+# ==========================
+# 驅動需求: Linux/Windows 驅動版本 ≥550.54.14
+# 若安裝速度慢可改國內鏡像
+# paddlepaddle-gpu==3.2.0 -i https://www.paddlepaddle.org.cn/packages/stable/cu129/
+# paddleocr
+
+# ==========================
+# 🪟 GUI + 系統工具
+# ==========================
 pyqt6==6.9.1
 numpy==1.26.4
 Pillow==10.4.0
 mss==9.0.0
 requests==2.32.3
 google-generativeai==0.8.3
+
+# ==========================
+# ⚙️ 進階選項（可選）
+# ==========================
+bitsandbytes>=0.43.1          # 若使用 8-bit / 4-bit 量化
+sentencepiece>=0.2.0          # NLLB tokenizer 相容
+protobuf>=5.27.0

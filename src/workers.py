@@ -25,16 +25,21 @@ def run_translation(queue, text: str, is_api_mode: bool,
             out = [api.translate_text(p) for p in paras]
             queue.put(("result", "\n\n".join(out)))
         else:
-            from NLLB_translator import NLLBTranslator, NLLBConfig, TranslateConfig
+            from NLLB_translator_gpu import NLLBTranslator, NLLBConfig, TranslateConfig
             cfg = NLLBConfig(
                 model_name=nllb_cfg_dict["model_name"],
                 src_language=nllb_cfg_dict.get("src_language"),
                 tgt_language=nllb_cfg_dict["tgt_language"],
-                local_dir=nllb_cfg_dict["local_dir"],          # ★ 必填：由 GUI 選擇
+                local_dir=nllb_cfg_dict["local_dir"],          # �� ����G�� GUI ���
                 prefer_safetensors=nllb_cfg_dict.get("prefer_safetensors", False),
-                low_cpu_mem_usage=True,
+                low_cpu_mem_usage=nllb_cfg_dict.get("low_cpu_mem_usage", True),
                 torch_dtype=nllb_cfg_dict.get("torch_dtype", "float32"),
-                revision="main",
+                revision=nllb_cfg_dict.get("revision", "main"),
+                device=nllb_cfg_dict.get("device", "auto"),
+                load_in_8bit=nllb_cfg_dict.get("load_in_8bit", False),
+                load_in_4bit=nllb_cfg_dict.get("load_in_4bit", False),
+                use_tf32=nllb_cfg_dict.get("use_tf32", True),
+                gpu_id=nllb_cfg_dict.get("gpu_id", 0),
             )
             gcfg = TranslateConfig(
                 max_new_tokens=translate_cfg_dict["max_new_tokens"],
@@ -136,6 +141,13 @@ class TranslationWorker:
             "local_dir": nllb_cfg.local_dir,
             "prefer_safetensors": nllb_cfg.prefer_safetensors,
             "torch_dtype": getattr(nllb_cfg.torch_dtype, "name", nllb_cfg.torch_dtype),
+            "device": getattr(nllb_cfg, "device", "auto"),
+            "load_in_8bit": getattr(nllb_cfg, "load_in_8bit", False),
+            "load_in_4bit": getattr(nllb_cfg, "load_in_4bit", False),
+            "use_tf32": getattr(nllb_cfg, "use_tf32", True),
+            "gpu_id": getattr(nllb_cfg, "gpu_id", 0),
+            "low_cpu_mem_usage": getattr(nllb_cfg, "low_cpu_mem_usage", True),
+            "revision": getattr(nllb_cfg, "revision", "main"),
         }
         self.translate_cfg_dict = {
             "max_new_tokens": translate_config.max_new_tokens,

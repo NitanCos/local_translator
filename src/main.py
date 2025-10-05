@@ -18,10 +18,15 @@ from workers import TranslationWorker, OCRWorker
 import ocr_paths as ocr_paths_mod
 from history_views import HistoryManager
 import log_viewer as log_viewer_mod
-from NLLB_translator import NLLBTranslator, NLLBConfig, TranslateConfig
+from NLLB_translator_gpu import NLLBTranslator, NLLBConfig, TranslateConfig
 from logging_utils import setup_logging
 from PIL import Image
 import tempfile
+
+try:
+    import torch
+except ImportError:
+    torch = None
 
 # =========================
 # 日誌系統初始化
@@ -54,13 +59,18 @@ class MainApplication(QtWidgets.QMainWindow, Ui_MainWindow):
         #
 
         self.nllb_cfg = NLLBConfig(
-        model_name="facebook/nllb-200-distilled-1.3B",
-        src_language=None,
-        tgt_language="zho_Hant",
-        local_dir=None,               # 由使用者選擇
-        prefer_safetensors=False,     # 建議關閉
-        low_cpu_mem_usage=True,
-        torch_dtype="float32",
+            model_name="facebook/nllb-200-distilled-1.3B",
+            src_language=None,
+            tgt_language="zho_Hant",
+            local_dir=None,               
+            prefer_safetensors=False,     
+            low_cpu_mem_usage=True,
+            torch_dtype="float32",
+            device="auto",
+            load_in_8bit=False,
+            load_in_4bit=False,
+            use_tf32=True,
+            gpu_id=0,
         )
         # 生成參數
         self.translate_config = TranslateConfig()
@@ -1048,28 +1058,83 @@ class MainApplication(QtWidgets.QMainWindow, Ui_MainWindow):
         st_chk.setChecked(self.nllb_cfg.prefer_safetensors)
         form.addRow(st_chk)
 
+        gpu_chk = QtWidgets.QCheckBox("使用 GPU 加速 (需要 CUDA) / Use GPU acceleration")
+        gpu_available = bool(torch and torch.cuda.is_available())
+        if not gpu_available:
+            gpu_chk.setEnabled(False)
+            gpu_chk.setToolTip("未偵測到可用的 GPU / No compatible GPU detected")
+        current_device = getattr(self.nllb_cfg, "device", "auto")
+        gpu_chk.setChecked(gpu_available and current_device != "cpu")
+        form.addRow(gpu_chk)
+
+
         # ===== 生成參數（完整保留）=====
-        max_tok = QtWidgets.QSpinBox(); max_tok.setRange(1, 99999); max_tok.setValue(self.translate_config.max_new_tokens)
-        min_len = QtWidgets.QSpinBox(); min_len.setRange(0, 5000); min_len.setValue(self.translate_config.min_length)
-        num_beams = QtWidgets.QSpinBox(); num_beams.setRange(1, 20); num_beams.setValue(self.translate_config.num_beams)
-        early_chk = QtWidgets.QCheckBox("早期停止 / Early Stopping"); early_chk.setChecked(self.translate_config.early_stopping)
+        # === SpinBox 設定區 ===
+        max_tok = QtWidgets.QSpinBox(); max_tok.setRange(1, 99999)
+        max_tok.setValue(self.translate_config.max_new_tokens)
+        max_tok.setAccelerated(True)
 
-        len_penalty = QtWidgets.QDoubleSpinBox(); len_penalty.setRange(0.0, 10.0); len_penalty.setDecimals(2)
-        len_penalty.setValue(self.translate_config.length_penalty)
+        # 自適應步幅
+        def _adapt_max_tok_step(val: int):
+            if val < 256:
+                step = 16
+            elif val < 1024:
+                step = 32
+            elif val < 4096:
+                step = 64
+            else:
+                step = 128
+            max_tok.setSingleStep(step)
+        _adapt_max_tok_step(max_tok.value())
+        max_tok.valueChanged.connect(_adapt_max_tok_step)
 
-        ngram_spin = QtWidgets.QSpinBox(); ngram_spin.setRange(0, 20); ngram_spin.setValue(self.translate_config.no_repeat_ngram_size)
+        min_len = QtWidgets.QSpinBox(); min_len.setRange(0, 99999)
+        min_len.setValue(self.translate_config.min_length)
+        min_len.setSingleStep(16); min_len.setAccelerated(True)
 
-        rep_penalty = QtWidgets.QDoubleSpinBox(); rep_penalty.setRange(0.0, 10.0); rep_penalty.setDecimals(2)
-        rep_penalty.setValue(self.translate_config.repetition_penalty)
+        num_beams = QtWidgets.QSpinBox(); num_beams.setRange(1, 20)
+        num_beams.setValue(self.translate_config.num_beams)
+        num_beams.setSingleStep(1); num_beams.setAccelerated(True)
 
-        do_sample_chk = QtWidgets.QCheckBox("隨機採樣 / Do Sampling"); do_sample_chk.setChecked(self.translate_config.do_sample)
+        early_chk = QtWidgets.QCheckBox("早期停止 / Early Stopping")
+        early_chk.setChecked(self.translate_config.early_stopping)
 
-        temp_spin = QtWidgets.QDoubleSpinBox(); temp_spin.setRange(0.1, 5.0); temp_spin.setDecimals(2)
-        temp_spin.setValue(self.translate_config.temperature)
+        len_penalty = QtWidgets.QDoubleSpinBox(); len_penalty.setRange(0.0, 10.0)
+        len_penalty.setDecimals(2); len_penalty.setValue(self.translate_config.length_penalty)
+        len_penalty.setSingleStep(0.10); len_penalty.setAccelerated(True)
 
-        topk_spin = QtWidgets.QSpinBox(); topk_spin.setRange(1, 1000); topk_spin.setValue(self.translate_config.top_k)
-        topp_spin = QtWidgets.QDoubleSpinBox(); topp_spin.setRange(0.0, 1.0); topp_spin.setDecimals(2)
-        topp_spin.setValue(self.translate_config.top_p)
+        ngram_spin = QtWidgets.QSpinBox(); ngram_spin.setRange(0, 20)
+        ngram_spin.setValue(self.translate_config.no_repeat_ngram_size)
+        ngram_spin.setSingleStep(1); ngram_spin.setAccelerated(True)
+
+        rep_penalty = QtWidgets.QDoubleSpinBox(); rep_penalty.setRange(0.0, 10.0)
+        rep_penalty.setDecimals(2); rep_penalty.setValue(self.translate_config.repetition_penalty)
+        rep_penalty.setSingleStep(0.10)
+
+        do_sample_chk = QtWidgets.QCheckBox("隨機採樣 / Do Sampling")
+        do_sample_chk.setChecked(self.translate_config.do_sample)
+
+        temp_spin = QtWidgets.QDoubleSpinBox(); temp_spin.setRange(0.1, 5.0)
+        temp_spin.setDecimals(2); temp_spin.setValue(self.translate_config.temperature)
+        temp_spin.setSingleStep(0.05)
+
+        topk_spin = QtWidgets.QSpinBox(); topk_spin.setRange(1, 500)
+        topk_spin.setValue(self.translate_config.top_k)
+        topk_spin.setSingleStep(5); topk_spin.setAccelerated(True)
+
+        topp_spin = QtWidgets.QDoubleSpinBox(); topp_spin.setRange(0.0, 1.0)
+        topp_spin.setDecimals(2); topp_spin.setValue(self.translate_config.top_p)
+        topp_spin.setSingleStep(0.01)
+
+        # === 隨機採樣控制 ===
+        def _toggle_sampling_controls(checked: bool):
+            temp_spin.setEnabled(checked)
+            topk_spin.setEnabled(checked)
+            topp_spin.setEnabled(checked)
+
+        _toggle_sampling_controls(do_sample_chk.isChecked())
+        do_sample_chk.toggled.connect(_toggle_sampling_controls)
+
 
         form.addRow("最大生成 Token / Max New Tokens", max_tok)
         form.addRow("最小長度 / Min Length", min_len)
@@ -1095,6 +1160,11 @@ class MainApplication(QtWidgets.QMainWindow, Ui_MainWindow):
             src_name = src_combo.currentText()
             src_code = None if src_name == "Auto" else NAME_TO_CODE.get(src_name)
 
+            gpu_enabled = gpu_chk.isChecked() and gpu_available
+            device = "cuda" if gpu_enabled else "cpu"
+            torch_dtype = "float16" if gpu_enabled else "float32"
+
+
             self.update_translator_config(
                 model_name=model_combo.currentText(),
                 src_lang_name=src_name,              # 傳可視名稱，函式內會轉換
@@ -1112,6 +1182,8 @@ class MainApplication(QtWidgets.QMainWindow, Ui_MainWindow):
                 temperature=temp_spin.value(),
                 top_k=topk_spin.value(),
                 top_p=topp_spin.value(),
+                device=device,
+                torch_dtype=torch_dtype,
             )
             dlg.accept()
 
@@ -1143,6 +1215,8 @@ class MainApplication(QtWidgets.QMainWindow, Ui_MainWindow):
         temperature: float,
         top_k: int,
         top_p: float,
+        device: str,
+        torch_dtype: str,
     ):
         """
         寫回本地 NLLB 與生成參數設定（不在此階段建模；真正載入在子進程）。
@@ -1163,6 +1237,9 @@ class MainApplication(QtWidgets.QMainWindow, Ui_MainWindow):
             self.nllb_cfg.tgt_language = tgt_lang
             self.nllb_cfg.local_dir = local_dir
             self.nllb_cfg.prefer_safetensors = prefer_safetensors
+            self.nllb_cfg.device = device
+            self.nllb_cfg.torch_dtype = torch_dtype
+            self.nllb_cfg.use_tf32 = bool(device == "cuda")
 
             # --- 回寫生成參數 ---
             tc = self.translate_config
@@ -1187,10 +1264,11 @@ class MainApplication(QtWidgets.QMainWindow, Ui_MainWindow):
 
             logger.info(
                 ("Translator config updated: model=%s, src=%s, tgt=%s, local_dir=%s, prefer_safetensors=%s, "
-                "max_new_tokens=%d, min_length=%d, beams=%d, early=%s, len_penalty=%.2f, ngram=%d, "
-                "rep_penalty=%.2f, sample=%s, temp=%.2f, top_k=%d, top_p=%.2f"),
+                "device=%s, torch_dtype=%s, max_new_tokens=%d, min_length=%d, beams=%d, early=%s, "
+                "len_penalty=%.2f, ngram=%d, rep_penalty=%.2f, sample=%s, temp=%.2f, top_k=%d, top_p=%.2f"),
                 self.nllb_cfg.model_name, self.nllb_cfg.src_language, self.nllb_cfg.tgt_language,
                 self.nllb_cfg.local_dir, self.nllb_cfg.prefer_safetensors,
+                self.nllb_cfg.device, getattr(self.nllb_cfg.torch_dtype, "name", self.nllb_cfg.torch_dtype),
                 tc.max_new_tokens, tc.min_length, tc.num_beams, tc.early_stopping, tc.length_penalty,
                 tc.no_repeat_ngram_size, tc.repetition_penalty, tc.do_sample, tc.temperature, tc.top_k, tc.top_p
             )
